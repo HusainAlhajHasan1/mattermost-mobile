@@ -1979,7 +1979,7 @@ admin_cred() {   # $1 = field name in dashboard-admin.txt
 
 print_vps_summary() {
     local dash_url dash_user dash_pass first_dest
-    first_dest=${HOME_DESTS_LIST%%,*}
+    first_dest=${HOME_DESTS_LIST%%,*}; first_dest=${first_dest%%/*}
     dash_url="http://$DASH_BIND:$DASH_PORT"
     dash_user=$(admin_cred username)
     dash_pass=$(admin_cred password)
