@@ -799,7 +799,11 @@ gen_keypair() {   # prints "priv pub"
 
 conf_privkey() {
     [[ -r $1 ]] || return 0
-    awk -F' *= *' 'tolower($1)=="privatekey" {print $2; exit}' "$1" 2>/dev/null || true
+    # NB: never split on '=' — a WireGuard key is base64 and the padding '='
+    # belongs to it (43 chars instead of 44 => "Key is not the correct length").
+    awk '/^[[:space:]]*[Pp]rivate[[:space:]]*[Kk]ey[[:space:]]*=/ {
+             sub(/^[^=]*=[[:space:]]*/, ""); sub(/[[:space:]\r]+$/, ""); print; exit }' \
+        "$1" 2>/dev/null || true
 }
 
 conf_listen_port() {
@@ -1680,10 +1684,15 @@ role_home() {
     local priv pub existing
     existing=$(conf_privkey "/etc/wireguard/${RELAY_IFACE}.conf")
     if [[ -n $existing ]]; then
-        priv=$existing
-        pub=$(printf '%s\n' "$priv" | wg pubkey)
-        info "reusing the existing $RELAY_IFACE private key"
-    else
+        if pub=$(printf '%s\n' "$existing" | wg pubkey 2>/dev/null); then
+            priv=$existing
+            info "reusing the existing $RELAY_IFACE private key"
+        else
+            warn "the private key in /etc/wireguard/${RELAY_IFACE}.conf is unusable — generating a new one"
+            existing=""
+        fi
+    fi
+    if [[ -z $existing ]]; then
         read -r priv pub <<<"$(gen_keypair)"
         [[ -n $priv && -n $pub ]] || die "wg genkey failed"
     fi
@@ -1866,9 +1875,15 @@ setup_vps_relay() {
     local priv pub existing
     existing=$(conf_privkey "/etc/wireguard/${RELAY_IFACE}.conf")
     if [[ -n $existing ]]; then
-        priv=$existing; pub=$(printf '%s\n' "$priv" | wg pubkey)
-        info "reusing the existing $RELAY_IFACE private key"
-    else
+        if pub=$(printf '%s\n' "$existing" | wg pubkey 2>/dev/null); then
+            priv=$existing
+            info "reusing the existing $RELAY_IFACE private key"
+        else
+            warn "the private key in /etc/wireguard/${RELAY_IFACE}.conf is unusable — generating a new one"
+            existing=""
+        fi
+    fi
+    if [[ -z $existing ]]; then
         read -r priv pub <<<"$(gen_keypair)"
         [[ -n $priv && -n $pub ]] || die "wg genkey failed"
     fi
