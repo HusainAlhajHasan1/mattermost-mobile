@@ -25,6 +25,8 @@ next to what already exists, never in place of it.
 ├── vps-setup.sh           run on the public VPS
 ├── wg-relay-setup.sh      the engine (both wrappers call it, --role home|vps)
 ├── relay.conf.example     copy to relay.conf and adjust
+├── LICENSE                AGPL-3.0 (verbatim)
+├── NOTICE                 copyright + how to apply it
 └── README.md
 ```
 
@@ -326,5 +328,6 @@ If you want that, it is a different product — here the tunnel *only* carries
 **IPv6?** Not covered. The relay is IPv4-only on purpose; add `Table=off`-style
 routes yourself if you need v6 destinations.
 
-**License:** AGPL-3.0-or-later — see `LICENSE`. If you run a modified
-version as a network service, the license asks you to publish the source.
+**License:** AGPL-3.0-or-later — see `LICENSE` and `NOTICE`. If you run a
+modified version as a network service, the license asks you to publish the
+source.
