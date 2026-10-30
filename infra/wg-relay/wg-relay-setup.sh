@@ -1068,10 +1068,54 @@ EOF
     chmod 600 "$FW_FILE"
 }
 
+# Can this network namespace do nftables NAT at all?
+# Unprivileged LXC containers inherit the host kernel: if the Proxmox host has
+# no nf_nat / nft_chain_nat loaded, "masquerade" fails with
+# "Operation not supported" — after the tunnel was already built.
+nat_probe() {   # prints the nft error on failure, returns 1
+    have nft || { printf 'nft is not installed'; return 1; }
+    if (( DRY_RUN && ! CHECK_ONLY )); then return 0; fi
+    local t=wgrelay_natprobe err=""
+    nft delete table inet $t 2>/dev/null || true
+    if ! err=$( { nft add table inet $t &&
+                  nft "add chain inet $t c { type nat hook postrouting priority srcnat; }" &&
+                  nft "add rule inet $t c oifname \"wgrelay-probe0\" masquerade"; } 2>&1 ); then
+        nft delete table inet $t 2>/dev/null || true
+        printf '%s' "$err"
+        return 1
+    fi
+    nft delete table inet $t 2>/dev/null || true
+    return 0
+}
+
+nat_hint() {
+    cat <<EOF
+    nftables NAT (masquerade) is not available in this container${1:+: $1}
+
+    Proxmox/Debian LXC: this is a HOST kernel module problem, nothing in the
+    container is broken. On the Proxmox host run:
+
+        modprobe nf_nat nft_chain_nat
+        printf 'nf_nat\nnft_chain_nat\n' > /etc/modules-load.d/netfilter-nat.conf
+
+    then re-run this script (it continues where it stopped).
+
+    If the service you want to reach runs on THIS machine (not on another LAN
+    host), NAT is not needed at all: add --set HOME_SNAT=no
+EOF
+}
+
 apply_fw() {
     (( DRY_RUN )) && { info "[dry-run] would apply $FW_FILE"; return 0; }
     if have nft; then
-        nft -f "$FW_FILE" || die "nftables rejected $FW_FILE (see message above)"
+        local out=""
+        if ! out=$(nft -f "$FW_FILE" 2>&1); then
+            printf '%s\n' "$out" >&2
+            if grep -qi "operation not supported" <<<"$out" && grep -q masquerade "$FW_FILE"; then
+                die "$(nat_hint)"
+            fi
+            die "nftables rejected $FW_FILE (see message above)"
+        fi
     else
         warn "nft is not installed — isolation rules were NOT applied"
         return 0
@@ -1583,6 +1627,19 @@ role_home() {
     check_no_clash "$CLIENT_NET"       "CLIENT_NET"
     check_no_clash "$RELAY_HOME_IP/32" "RELAY_HOME_IP"
     check_no_clash "$RELAY_VPS_IP/32"  "RELAY_VPS_IP"
+
+    # NAT is what lets clients reach a *different* machine in the LAN
+    case "${HOME_SNAT,,}" in
+        yes|true|1)
+            local nat_err=""
+            if nat_err=$(nat_probe); then
+                info "nftables NAT (masquerade): ok"
+            else
+                warn "$(nat_hint "$nat_err")"
+                problem "nftables NAT (masquerade) unavailable${nat_err:+: $nat_err}"
+            fi
+            ;;
+    esac
 
     # ports — an existing installation always wins, so re-runs keep working
     if [[ $RELAY_PORT -le 0 ]]; then

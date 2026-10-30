@@ -105,7 +105,11 @@ there is no 51820 anywhere unless you ask for it.
    *Proxmox LXC:* `modprobe wireguard` on the **host**, `NET_ADMIN` + `NET_RAW`
    in the container (default for unprivileged), and if the container may not
    set sysctls, add `lxc.sysctl.net.ipv4.ip_forward = 1` to
-   `/etc/pve/lxc/<id>.conf` and restart it once.
+   `/etc/pve/lxc/<id>.conf` and restart it once. The **home side also needs
+   NAT** in the container, i.e. `nf_nat` + `nft_chain_nat` loaded on the host:
+   `modprobe nf_nat nft_chain_nat` (and put both names in
+   `/etc/modules-load.d/netfilter-nat.conf` so it survives a reboot). The
+   script probes this first and tells you before changing anything.
 3. Home side: the machine must be able to reach the service (same LAN/bridge).
 4. VPS: two free ports (client WireGuard, dashboard). Picked automatically.
 5. Optional but free: a provider snapshot of the VPS before you start.
@@ -295,6 +299,7 @@ directory, interface names and unit names via config — not wired in yet.
 | tunnel up, nothing reachable | `HOME_DESTS` wrong, or service on a different host without SNAT | keep `HOME_SNAT=yes`, check `nft list table inet wgrelay` |
 | clients can reach the VPS | a `FORWARD ACCEPT` rule of another firewall sitting before ours | `wg-relay-fw` inserts at the top; re-run the script |
 | relay drops after minutes | ISP shaping or MTU | lower `RELAY_MTU` / `CLIENT_MTU`, try `--mode udp` |
+| `masquerade … Operation not supported` (LXC) | the Proxmox **host** has no `nf_nat`/`nft_chain_nat` loaded | `modprobe nf_nat nft_chain_nat` on the host, persist it in `/etc/modules-load.d/`, re-run; or `--set HOME_SNAT=no` if the service is on the relay host itself |
 | `port … is already in use` | another service owns it | the script stops before changing anything — pick another |
 | `ping` works, HTTP doesn't | MSS clamping missing | re-run the script (it sets `MSS_CLAMP`), or lower the client MTU |
 | dashboard does not start | missing `python3-venv`, no internet for pip | the relay works without it; `journalctl -u wireguard-dashboard -n 50` |
