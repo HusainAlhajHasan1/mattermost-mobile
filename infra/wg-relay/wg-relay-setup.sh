@@ -32,7 +32,7 @@
 # =============================================================================
 set -Eeuo pipefail
 
-VERSION="1.0.4"
+VERSION="1.0.5"
 PROG="${0##*/}"
 SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/${BASH_SOURCE[0]##*/}"
 
@@ -1562,6 +1562,38 @@ check_iface_free() {
 # make sure a CIDR (or a comma separated list of them) does not clash with a
 # route or an address that is already present on this machine. Routes that
 # belong to our own interfaces are ignored, so re-runs stay clean.
+# Prints every HOME_DESTS entry that does not overlap a network this host has.
+dests_off_local_nets() {
+    have ip || return 0
+    have python3 || return 0
+    python3 - "$HOME_DESTS_LIST" <<'PYNET'
+import ipaddress, subprocess, sys
+try:
+    out = subprocess.run(["ip", "-o", "-4", "addr", "show"],
+                         capture_output=True, text=True).stdout
+    nets = []
+    for line in out.splitlines():
+        parts = line.split()
+        if "inet" in parts:
+            nets.append(ipaddress.ip_network(parts[parts.index("inet") + 1], strict=False))
+    bad = []
+    for c in sys.argv[1].split(","):
+        c = c.strip()
+        if not c:
+            continue
+        n = ipaddress.ip_network(c, strict=False)
+        if not any(n.overlaps(m) for m in nets):
+            bad.append(c)
+    if bad:
+        print(", ".join(bad))
+        sys.exit(1)
+except SystemExit:
+    raise
+except Exception:
+    sys.exit(0)
+PYNET
+}
+
 check_no_clash() {
     local list=$1 what=$2 cidr hits
     local -a elems=()
@@ -1624,6 +1656,14 @@ role_home() {
     check_no_clash "$CLIENT_NET"       "CLIENT_NET"
     check_no_clash "$RELAY_HOME_IP/32" "RELAY_HOME_IP"
     check_no_clash "$RELAY_VPS_IP/32"  "RELAY_VPS_IP"
+
+    # HOME_DESTS that is not on any network of this machine is usually a typo:
+    # such packets go to the default gateway, which cannot route them back
+    if ! bad_dests=$(dests_off_local_nets); then
+        warn "HOME_DESTS: $bad_dests is not on any network of this machine"
+        warn "  local networks: $(ip -o -4 addr show 2>/dev/null | awk '{print $4}' | tr '\n' ' ')"
+        warn "  if that host is behind a router on purpose, ignore this"
+    fi
 
     # NAT is what lets clients reach a *different* machine in the LAN
     case "${HOME_SNAT,,}" in
