@@ -169,6 +169,7 @@ ${C_B}OPTIONS${C_R}
 ${C_B}CONVENIENCE FLAGS${C_R}
   --home-public-ip IP    --vps-public-ip IP    --home-dests LIST
   --home-dns IP          --relay-port PORT     --mode faketcp|udp|icmp
+  --home-allow-tcp LIST  --home-allow-udp LIST  (ports the home side may use)
   --udp2raw-key KEY      --client-net CIDR     --client-listen-port PORT
   --dash-domain DOMAIN   --dash-email MAIL     --dash-port PORT
   --dash-bind ADDR       --dash-user USER      --dash-pass PASS
@@ -257,6 +258,8 @@ while (( $# )); do
         --dash-domain)           need_val "$@"; OVERRIDES[DASH_DOMAIN]="$2"; shift 2 ;;
         --dash-email)            need_val "$@"; OVERRIDES[DASH_EMAIL]="$2"; shift 2 ;;
         --dash-port)             need_val "$@"; OVERRIDES[DASH_PORT]="$2"; shift 2 ;;
+        --home-allow-tcp)        need_val "$@"; OVERRIDES[HOME_ALLOW_TCP]="$2"; shift 2 ;;
+        --home-allow-udp)        need_val "$@"; OVERRIDES[HOME_ALLOW_UDP]="$2"; shift 2 ;;
         --dash-bind)             need_val "$@"; OVERRIDES[DASH_BIND]="$2"; shift 2 ;;
         --dash-user)             need_val "$@"; OVERRIDES[DASH_USER]="$2"; shift 2 ;;
         --dash-pass)             need_val "$@"; OVERRIDES[DASH_PASS]="$2"; shift 2 ;;
@@ -716,6 +719,54 @@ state_write() {
     } >"$tmp"
     mv "$tmp" "$STATE_FILE"
     chmod 600 "$STATE_FILE"
+}
+
+# One installation per machine.
+# The unit names (udp2raw-relay.service / wg-relay-firewall.service), the state
+# directory (/etc/wireguard-relay) and the nft table (inet wgrelay) are fixed, so
+# a second, differently addressed installation on the same host would silently
+# take over the first one. Refuse instead of breaking a working tunnel.
+assert_single_instance() {
+    [[ -r $STATE_FILE ]] || return 0
+    local p_role p_net p_ciface p_rface p_vps p_home
+    p_role=$(state_get ROLE)        || p_role=""
+    p_net=$(state_get CLIENT_NET)   || p_net=""
+    p_ciface=$(state_get CLIENT_IFACE) || p_ciface=""
+    p_rface=$(state_get RELAY_IFACE)   || p_rface=""
+    p_vps=$(state_get RELAY_VPS_IP)    || p_vps=""
+    p_home=$(state_get RELAY_HOME_IP)  || p_home=""
+
+    local -a differs=()
+    if [[ -n $p_net    && $p_net    != "$CLIENT_NET"    ]]; then differs+=("CLIENT_NET      $p_net  vs  $CLIENT_NET"); fi
+    if [[ -n $p_ciface && $p_ciface != "$CLIENT_IFACE"  ]]; then differs+=("CLIENT_IFACE    $p_ciface  vs  $CLIENT_IFACE"); fi
+    if [[ -n $p_rface  && $p_rface  != "$RELAY_IFACE"   ]]; then differs+=("RELAY_IFACE     $p_rface  vs  $RELAY_IFACE"); fi
+    if [[ -n $p_vps    && $p_vps    != "$RELAY_VPS_IP"  ]]; then differs+=("RELAY_VPS_IP    $p_vps  vs  $RELAY_VPS_IP"); fi
+    if [[ -n $p_home   && $p_home   != "$RELAY_HOME_IP" ]]; then differs+=("RELAY_HOME_IP   $p_home  vs  $RELAY_HOME_IP"); fi
+    if [[ ${#differs[@]} -eq 0 ]]; then return 0; fi
+
+    local msg="a different wg-relay installation already exists on this machine (role ${p_role:-?}).
+    The unit names, $RELAY_DIR and the nft table are fixed, so two installations
+    on one machine would overwrite each other."
+    if (( CHECK_ONLY )); then
+        warn "${msg//$'\n'/$'\n    '}"
+        printf '    - %s\n' "${differs[@]}"
+        warn "the run would stop here — use the existing values, --uninstall first, or another machine"
+        return 0
+    fi
+    printf '\n' >&2
+    printf '%s[✗]%s %s\n' "$C_RD" "$C_R" "$msg" >&2
+    printf '    - %s\n' "${differs[@]}" >&2
+    printf '\n' >&2
+    printf '    Options:\n' >&2
+    printf '      1. keep the values that are already configured (re-run without --set)\n' >&2
+    printf '      2. sudo %s --uninstall   (removes this installation, then re-run)\n' "$PROG" >&2
+    printf '      3. run the second tunnel on a different machine\n' >&2
+    printf '      4. --force to overwrite anyway (the other tunnel will stop working)\n\n' >&2
+    if (( FORCE )); then
+        warn "--force given: continuing, the existing installation will be replaced"
+        return 0
+    fi
+    exit 1
 }
 
 # update (or append) KEY=VALUE inside the config file, so the file can simply
@@ -2143,6 +2194,8 @@ main() {
 
     [[ -n $ROLE ]] || die "use --role home or --role vps (see --help)"
     [[ $ROLE == home || $ROLE == vps ]] || die "--role must be 'home' or 'vps'"
+
+    assert_single_instance
 
     if (( CHECK_ONLY )); then
         DRY_RUN=1

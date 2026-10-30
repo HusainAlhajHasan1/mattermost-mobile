@@ -301,6 +301,33 @@ sudo ./vps-setup.sh --uninstall     # remove the relay (keeps dashboard + wgvpn0
 sudo ./vps-setup.sh --uninstall --purge   # remove those too
 ```
 
+### Running it on another pair of machines
+
+A second home server + a second VPS are no problem: the two installations share
+nothing — not ports, not subnets, not files. Copy the same folder over and give
+the second pair its own addresses:
+
+```bash
+sudo ./home-setup.sh --home-public-ip <ip2> --home-dests 10.20.0.0/24 \
+     --client-net 10.76.0.0/24 \
+     --set RELAY_VPS_IP=10.77.0.2 --set RELAY_HOME_IP=10.77.0.1
+```
+
+Two installations on the **same** machine are not supported: `/etc/wireguard-relay`,
+the unit names and the `inet wgrelay` table are fixed, so the second one would
+silently overwrite the first. The script detects it and stops before changing
+anything:
+
+```
+[✗] a different wg-relay installation already exists on this machine (role home).
+    - CLIENT_NET      10.66.0.0/24  vs  10.76.0.0/24
+```
+
+Re-running with the *same* values is always fine (that is how re-runs and
+upgrades work); use `--uninstall` first if you really want to replace it.
+For the home policy there are also shortcuts: `--home-allow-tcp "8065 443"` and
+`--home-allow-udp "53"`.
+
 ---
 
 ## 8. Rollback and recovery (and what could realistically break)
