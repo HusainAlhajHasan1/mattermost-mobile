@@ -92,6 +92,7 @@ FW_HELPER="/usr/local/sbin/wg-relay-fw"
 UNIT_UDP2RAW="udp2raw-relay.service"
 UNIT_FW="wg-relay-firewall.service"
 BACKUP_ROOT="/var/backups/wg-relay"
+SNAP_DIR="$RELAY_DIR/baseline"      # where --snapshot stores its baseline
 
 # runtime flags
 DRY_RUN=0
@@ -100,6 +101,8 @@ CHECK_ONLY=0
 UNINSTALL=0
 FORCE=0
 STATUS_ONLY=0
+SNAPSHOT_ONLY=0
+DIFF_ONLY=0
 PEER_PUBKEY=""
 PEER_SSH=""
 CONFIG_FILE=""
@@ -152,6 +155,9 @@ ${C_B}OPTIONS${C_R}
   --set KEY=VALUE           override any config variable, repeatable
   --check                   run every validation, change nothing
   --status                  show what is configured / running right now
+  --snapshot                record the current state (ports, routes, firewall,
+                            services) so you can prove later what changed
+  --diff                    compare the current state with that snapshot
   --uninstall               remove everything this script created
   --purge                   ... including the dashboard and wgvpn0 (VPS)
   --dry-run                 print what would be done
@@ -232,6 +238,8 @@ while (( $# )); do
                                  OVERRIDES["${_kv%%=*}"]="${_kv#*=}"; shift ;;
         --check)                 CHECK_ONLY=1; shift ;;
         --status)                STATUS_ONLY=1; shift ;;
+        --snapshot)              SNAPSHOT_ONLY=1; shift ;;
+        --diff)                  DIFF_ONLY=1; shift ;;
         --uninstall)             UNINSTALL=1; shift ;;
         --purge)                 UNINSTALL=2; shift ;;
         --dry-run)               DRY_RUN=1; shift ;;
@@ -1485,6 +1493,9 @@ check_no_clash() {
 # ROLE: home
 # ----------------------------------------------------------------------------
 role_home() {
+    if [[ ! -d $SNAP_DIR/latest ]]; then
+        info "tip: run 'sudo $PROG --snapshot' first, then '--diff' proves what changed"
+    fi
     step "Pre-flight checks (home side)"
     detect_pkg
     ensure_cmd wireguard-tools wg
@@ -1609,6 +1620,9 @@ role_home() {
 # ROLE: vps
 # ----------------------------------------------------------------------------
 role_vps() {
+    if [[ ! -d $SNAP_DIR/latest ]]; then
+        info "tip: run 'sudo $PROG --snapshot' first, then '--diff' proves what changed"
+    fi
     step "Pre-flight checks (VPS side)"
     detect_pkg
     ensure_cmd wireguard-tools wg
@@ -1928,6 +1942,141 @@ print_status() {
 }
 
 # ----------------------------------------------------------------------------
+# --snapshot / --diff : prove what changed on this machine
+# ----------------------------------------------------------------------------
+capture_state() {
+    local out=$1
+    mkdir -p "$out" 2>/dev/null || return 1
+    { ss -H -lntu 2>/dev/null | awk '{print $1, $5}' | LC_ALL=C sort -u; } >"$out/sockets.txt" 2>/dev/null || true
+    { ip -4 -o addr show 2>/dev/null | awk '{print $2, $4}'; } >"$out/addr4.txt" 2>/dev/null || true
+    { ip -4 route show 2>/dev/null; } >"$out/route4.txt" 2>/dev/null || true
+    { ip -6 route show 2>/dev/null | head -50; } >"$out/route6.txt" 2>/dev/null || true
+    { iptables-save 2>/dev/null || true; } >"$out/iptables.txt" 2>/dev/null || true
+    { nft list ruleset 2>/dev/null | sed -E 's/counter packets [0-9]+ bytes [0-9]+/counter/' || true; } >"$out/nftables.txt" 2>/dev/null || true
+    { systemctl list-units --type=service --all --no-legend --no-pager 2>/dev/null | awk '{print $1, $3, $4}'; } >"$out/services.txt" 2>/dev/null || true
+    { ls -1 /etc/wireguard 2>/dev/null; } >"$out/wireguard.txt" 2>/dev/null || true
+    {
+        echo "ip_forward=$(cat /proc/sys/net/ipv4/ip_forward 2>/dev/null)"
+        ufw status 2>/dev/null | head -1 || true
+        firewall-cmd --state 2>/dev/null || true
+    } >"$out/firewall-tools.txt" 2>/dev/null || true
+    return 0
+}
+
+# everything this setup creates is explained instead of looking suspicious
+OURS_RE='wgvpn0|wgrelay0|wg-relay|udp2raw-relay|wireguard-dashboard|inet wgrelay'
+build_ours_re() {
+    local v p
+    for v in RELAY_PORT CLIENT_LISTEN_PORT UDP2RAW_LOCAL_PORT WG_RELAY_LOCAL_PORT DASH_PORT; do
+        eval "p=\${$v:-}"
+        if [[ $p =~ ^[0-9]+$ ]]; then
+            OURS_RE+="|:$p( |$)"
+        fi
+    done
+}
+
+do_snapshot() {
+    local ts out
+    ts=$(date +%Y%m%d-%H%M%S)
+    out="$SNAP_DIR/$ts"
+    capture_state "$out" || die "could not write the snapshot to $out"
+    ln -sfn "$out" "$SNAP_DIR/latest" 2>/dev/null || true
+    find "$SNAP_DIR" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | LC_ALL=C sort | head -n -5         | while read -r d; do rm -rf "$d"; done
+    ok "baseline recorded: $out"
+    info "now install, then run:  sudo $PROG --diff"
+}
+
+declare -a GONE_LINES=()
+ADDED_TOTAL=0
+
+report_set() {   # $1 label, $2 baseline file, $3 current file, $4 max added lines to print
+    local label=$1 bf=$2 cf=$3 max=${4:-10} added gone line n_add n_gone shown
+    [[ -r $bf && -r $cf ]] || return 0
+    added=$(LC_ALL=C comm -13 <(LC_ALL=C sort -u "$bf") <(LC_ALL=C sort -u "$cf") 2>/dev/null || true)
+    gone=$(LC_ALL=C comm -23 <(LC_ALL=C sort -u "$bf") <(LC_ALL=C sort -u "$cf") 2>/dev/null || true)
+    n_add=0
+    n_gone=0
+    if [[ -n $added ]]; then n_add=$(printf '%s\n' "$added" | wc -l); fi
+    if [[ -n $gone ]]; then n_gone=$(printf '%s\n' "$gone" | wc -l); fi
+    ADDED_TOTAL=$((ADDED_TOTAL + n_add))
+    printf '  %-24s +%-3s -%-3s\n' "$label" "$n_add" "$n_gone"
+    if (( n_add )); then
+        shown=0
+        while IFS= read -r line; do
+            [[ -z $line ]] && continue
+            if (( shown >= max )); then
+                printf '      ... (%s more)\n' "$((n_add - shown))"
+                break
+            fi
+            if [[ $line =~ $OURS_RE ]]; then
+                printf '      + %s   <- wg-relay\n' "$line"
+            else
+                printf '      + %s\n' "$line"
+            fi
+            shown=$((shown + 1))
+        done <<<"$added"
+    fi
+    if (( n_gone )); then
+        while IFS= read -r line; do
+            [[ -z $line ]] && continue
+            if [[ $line =~ $OURS_RE ]]; then
+                printf '      - %s   <- wg-relay (expected)\n' "$line"
+            else
+                printf '      - %s   <- WAS THERE BEFORE, NOW GONE\n' "$line"
+                GONE_LINES+=("$label: $line")
+            fi
+        done <<<"$gone"
+    fi
+}
+
+do_diff() {
+    local base="$SNAP_DIR/latest" cur
+    if [[ ! -d $base ]]; then
+        die "no baseline found ($base).
+Run 'sudo $PROG --snapshot' BEFORE installing, then '--diff' afterwards."
+    fi
+    cur=$(mktemp -d)
+    capture_state "$cur" || die "could not capture the current state"
+    build_ours_re
+    GONE_LINES=()
+    ADDED_TOTAL=0
+
+    printf '\n%s== Changes since baseline %s%s\n\n' "$C_C" "$(basename "$(readlink -f "$base")")" "$C_R"
+    report_set "listening sockets"   "$base/sockets.txt"        "$cur/sockets.txt" 12
+    report_set "addresses"           "$base/addr4.txt"          "$cur/addr4.txt" 6
+    report_set "ipv4 routes"         "$base/route4.txt"         "$cur/route4.txt" 6
+    report_set "iptables rules"      "$base/iptables.txt"       "$cur/iptables.txt" 8
+    report_set "nftables rules"      "$base/nftables.txt"       "$cur/nftables.txt" 8
+    report_set "services"            "$base/services.txt"       "$cur/services.txt" 8
+    report_set "/etc/wireguard"      "$base/wireguard.txt"      "$cur/wireguard.txt" 6
+    report_set "forward / firewalls" "$base/firewall-tools.txt" "$cur/firewall-tools.txt" 4
+    rm -rf "$cur"
+
+    echo
+    if (( ${#GONE_LINES[@]} )); then
+        warn "${#GONE_LINES[@]} item(s) that existed BEFORE are gone now:"
+        printf '      %s\n' "${GONE_LINES[@]}"
+        cat <<EOM
+
+  ${C_B}What to do${C_R}
+    1. sudo $PROG --uninstall      # removes the relay, keeps everything else
+    2. sudo $PROG --diff           # compare again
+    3. still missing? restore the machine from your snapshot
+       (Proxmox snapshot / VPS provider snapshot / your own backup)
+
+EOM
+        return 1
+    fi
+    cat <<EOM
+  ${C_G}Nothing that existed before has disappeared.${C_R}
+  $ADDED_TOTAL new item(s), all of them created by wg-relay (marked above).
+  Your existing services, routes, firewall rules and ports are untouched.
+
+EOM
+    return 0
+}
+
+# ----------------------------------------------------------------------------
 # uninstall
 # ----------------------------------------------------------------------------
 do_uninstall() {
@@ -1976,6 +2125,15 @@ main() {
     if (( STATUS_ONLY )); then
         print_status
         exit 0
+    fi
+
+    if (( SNAPSHOT_ONLY )); then
+        do_snapshot
+        exit 0
+    fi
+
+    if (( DIFF_ONLY )); then
+        if do_diff; then exit 0; else exit 2; fi
     fi
 
     if (( UNINSTALL )); then

@@ -120,6 +120,8 @@ Copy this folder to both machines (e.g. `scp -r infra/wireguard-relay root@HOST:
 cd /root/wireguard-relay
 cp relay.conf.example relay.conf
 nano relay.conf            # set HOME_DESTS (your home LAN) and HOME_PUBLIC_IP
+sudo ./home-setup.sh --snapshot     # optional but recommended: records the "before" state
+sudo ./home-setup.sh --check        # validates everything, changes nothing
 sudo ./home-setup.sh --config relay.conf
 ```
 
@@ -137,7 +139,10 @@ Copy the **master** config (it now contains the udp2raw key and the relay port):
 
 ```bash
 scp root@94.183.52.210:/etc/wireguard-relay/relay.conf ./relay.conf
+sudo ./vps-setup.sh --snapshot      # records ports/routes/firewall/services BEFORE
+sudo ./vps-setup.sh --check
 sudo ./vps-setup.sh --config relay.conf --peer-pubkey '<home public key>'
+sudo ./vps-setup.sh --diff          # proves what changed (see section 8)
 ```
 
 The script installs `github.com/HusainAlhajhasan1/wireguard-dashboard`, points it
@@ -290,13 +295,128 @@ Useful one-liners:
 ```bash
 sudo ./vps-setup.sh --status        # interfaces, units, nft table, routes
 sudo ./vps-setup.sh --check         # re-run all validations, change nothing
+sudo ./vps-setup.sh --snapshot      # record the current state as baseline
+sudo ./vps-setup.sh --diff          # compare now vs. baseline (exit 2 = something vanished)
 sudo ./vps-setup.sh --uninstall     # remove the relay (keeps dashboard + wgvpn0)
 sudo ./vps-setup.sh --uninstall --purge   # remove those too
 ```
 
 ---
 
-## 8. FAQ
+## 8. Rollback and recovery (and what could realistically break)
+
+**Can I guarantee that nothing will break? No — and nobody honestly can**, this
+is a live machine with services on it. What can be said precisely is:
+
+* the script only **creates** objects (interfaces, table, units, ports, files),
+  it never edits or deletes an object it did not create;
+* every change is **listed in §8.2** and has a one-line undo;
+* `--snapshot` / `--diff` let you **prove** afterwards what changed, instead of
+  trusting anybody.
+
+Before starting, take a snapshot anyway if your provider offers one (it costs
+nothing), and keep the install running inside `tmux`/`screen` with a second SSH
+session open, so a dropped connection cannot interrupt it.
+
+### 8.1 Prove what changed
+
+```bash
+# before
+sudo ./vps-setup.sh --snapshot
+# ... install ...
+# after
+sudo ./vps-setup.sh --diff
+```
+
+```
+  listening sockets        +3   -0
+      + udp 0.0.0.0:51820   <- wg-relay
+      + udp 127.0.0.1:51830   <- wg-relay
+  ipv4 routes              +2   -0
+      + 10.10.0.0/24 dev wgrelay0   <- wg-relay
+  services                 +2   -0
+  ...
+
+  Nothing that existed before has disappeared.
+  12 new item(s), all of them created by wg-relay (marked above).
+  Your existing services, routes, firewall rules and ports are untouched.
+```
+
+The baseline lives in `/etc/wireguard-relay/baseline/` (last five are kept).
+`--diff` exits **2** and prints a red list if anything that existed before is
+gone — that is your alarm bell, and the report tells you what to do next.
+
+### 8.2 Everything the scripts can possibly change
+
+| what | where | undo |
+|---|---|---|
+| interface `wgrelay0` (both machines) | `/etc/wireguard/wgrelay0.conf` | `systemctl disable --now wg-quick@wgrelay0 && rm /etc/wireguard/wgrelay0.conf` |
+| interface `wgvpn0` (VPS only) | `/etc/wireguard/wgvpn0.conf` | same with `wgvpn0` (contains your peers — back it up) |
+| routes `10.67.0.1/32`, `HOME_DESTS` | added in `PostUp` | disappear with the interface, or `ip route del <cidr> dev wgrelay0` |
+| nftables table `inet wgrelay` | `/etc/wireguard-relay/firewall.nft` | `nft delete table inet wgrelay` |
+| 2–4 iptables ACCEPT rules | `FORWARD`, scoped to our 2 interfaces | `/usr/local/sbin/wg-relay-fw flush` |
+| 2 ufw/firewalld port rules | the ports the script picked | `ufw delete allow <port>/udp` and `.../tcp` |
+| `net.ipv4.ip_forward=1` | only if it was `0` before | `sysctl -w net.ipv4.ip_forward=0; rm /etc/sysctl.d/90-wg-relay.conf` |
+| udp2raw `-I INPUT ... DROP` | one port, added by udp2raw's `-a` | `udp2raw --clear`, or `iptables -D INPUT ...` |
+| dashboard | `/opt/wireguard-dashboard*`, `/var/lib/wireguard-dashboard` | `bash /opt/wireguard-dashboard-src/uninstall.sh` |
+| Caddy snippet + 1 import line | `/etc/caddy/conf.d/wireguard-dashboard.caddy` | delete the file, remove the `import` line, `systemctl reload caddy` |
+
+Nothing else. No `iptables -F`, no `nft flush ruleset`, no change to `wg0`/`wg1`,
+your bots, your existing udp2raw instance, your Mattermost, your default route.
+
+### 8.3 Undo, in three levels
+
+```bash
+# level 1 — remove the relay, keep the dashboard and its peers
+sudo ./vps-setup.sh --uninstall
+
+# level 1b — remove everything the script created on the VPS
+sudo ./vps-setup.sh --uninstall --purge
+
+# level 0 — check that the removal really restored everything
+sudo ./vps-setup.sh --diff
+```
+
+If `--diff` still shows a missing item, level 2 is the manual undo table in §8.2
+(each line is independent), and level 3 is the machine snapshot you took before
+starting: Proxmox `Snapshot → Rollback`, or your VPS provider's snapshot/backup,
+or restoring `/etc/wireguard`, `/etc/ufw`, `/etc/nftables.conf` from your own
+backup. The scripts also copy every file they overwrite to
+`/var/backups/wg-relay/<timestamp>/`.
+
+### 8.4 What could actually go wrong (and the fix)
+
+| symptom | why | fix |
+|---|---|---|
+| an unrelated service restarted during the install | `apt-get install` of a missing dependency (`python3-venv`, `nftables`) — it never upgrades or removes anything else | `systemctl restart <service>`; visible in the `--diff` "services" column |
+| a service on the VPS is unreachable **from the VPN clients** | that is the design — clients are isolated | nothing to fix; that is the goal |
+| `--refused: interface wgvpn0 already exists` | a different setup already uses that name | `--set CLIENT_IFACE=wgclients0` (or edit `relay.conf`) |
+| `port … is already in use` | the script refuses instead of stealing the port | it stops before changing anything — pick another one |
+| a subnet you already use got hijacked | only possible with `--force` | `ip route del <cidr> dev wgrelay0`, then fix `HOME_DESTS` |
+| dashboard does not start | missing `python3-venv`, no internet for pip, port taken | the relay keeps working without it; `journalctl -u wireguard-dashboard -n 50`, re-run the script |
+| Caddy config rejected | conflict with your existing vhosts | the script validates first and **rolls the Caddyfile back automatically**; the dashboard stays on `127.0.0.1:8080` |
+| `ip_forward could not be enabled` (Proxmox LXC) | unprivileged container | it stops **before** doing anything else and prints the `lxc.sysctl` line to add |
+| a TCP service on the relay port stopped answering | udp2raw's `-a` drops real TCP on *that* port (by design) | only possible if you forced a busy port: `udp2raw --clear` |
+
+### 8.5 Can I lock myself out of SSH?
+
+No, and here is why:
+
+* the nftables table only matches `iifname "wgvpn0"` / `"wgrelay0"`. Packets on
+  `eth0` (your SSH) never match a single rule of it — and its policies are
+  `accept`, so anything not matched is left exactly as it was;
+* the iptables shim inserts only `-i/-o wgrelay0` and `-i/-o wgvpn0` ACCEPT rules;
+* udp2raw's one INPUT rule matches only the relay port;
+* ufw/firewalld only ever get **added** port allow-rules for the ports the script
+  picked. Nothing is deleted, no default policy is changed.
+
+Worst case (you `--force`d something, or you want to start over): use the
+Proxmox console / your VPS provider's web console, or boot into the provider's
+rescue mode — the machine itself is unchanged outside the objects listed in §8.2.
+
+---
+
+## 9. FAQ
 
 **Why udp2raw at all?** Your existing setup uses it, and it hides WireGuard from
 ISP-level filtering. If your ISP does not block WireGuard you can drop udp2raw
