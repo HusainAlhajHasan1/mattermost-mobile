@@ -32,7 +32,7 @@
 # =============================================================================
 set -Eeuo pipefail
 
-VERSION="1.0.1"
+VERSION="1.0.2"
 PROG="${0##*/}"
 SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/${BASH_SOURCE[0]##*/}"
 
@@ -957,7 +957,7 @@ table inet wgrelay {
 	}
 
 	# -- what clients may forward ------------------------------------------
-	chain fwd {
+	chain "wg-fwd" {
 		type filter hook forward priority filter; policy accept;
 
 		iifname "$CLIENT_IFACE" oifname "$RELAY_IFACE" ip daddr @home_nets accept
@@ -967,13 +967,13 @@ table inet wgrelay {
 	}
 
 	# -- clients get nothing from this VPS itself ---------------------------
-	chain inp {
+	chain "wg-inp" {
 		type filter hook input priority filter; policy accept;
 		iifname "$CLIENT_IFACE" drop comment "no access to any service on this VPS"
 	}
 
 	# -- keep TCP segments small enough for the tunnel ----------------------
-	chain mssfix {
+	chain "wg-mss" {
 		type filter hook forward priority mangle; policy accept;
 		iifname "$CLIENT_IFACE" oifname "$RELAY_IFACE" tcp flags syn tcp option maxseg size set $MSS_CLAMP
 		iifname "$RELAY_IFACE" oifname "$CLIENT_IFACE" tcp flags syn tcp option maxseg size set $MSS_CLAMP
@@ -1026,7 +1026,7 @@ table inet wgrelay {
 	}
 
 	# -- services running on the relay host itself -------------------------
-	chain inp {
+	chain "wg-inp" {
 		type filter hook input priority filter; policy accept;
 
 		iifname "$RELAY_IFACE" icmp type { echo-request, destination-unreachable, time-exceeded } accept
@@ -1035,7 +1035,7 @@ ${tcp_rule}${udp_rule}		iifname "$RELAY_IFACE" drop comment "tunnel clients may 
 	}
 
 	# -- what tunnel clients may reach on the LAN --------------------------
-	chain fwd {
+	chain "wg-fwd" {
 		type filter hook forward priority filter; policy accept;
 
 		iifname "$RELAY_IFACE" ip daddr @home_nets accept
@@ -1044,7 +1044,7 @@ ${tcp_rule}${udp_rule}		iifname "$RELAY_IFACE" drop comment "tunnel clients may 
 	}
 
 	# -- keep TCP segments small enough for the tunnel ----------------------
-	chain mssfix {
+	chain "wg-mss" {
 		type filter hook forward priority mangle; policy accept;
 		iifname "$RELAY_IFACE" tcp flags syn tcp option maxseg size set $MSS_CLAMP
 		oifname "$RELAY_IFACE" tcp flags syn tcp option maxseg size set $MSS_CLAMP
@@ -1059,7 +1059,7 @@ EOF
 	# this relay host: their replies then go back to this host instead of
 	# being lost at the LAN gateway. Set HOME_SNAT="no" once every destination
 	# host has a route for $client_elems via $RELAY_HOME_IP.
-	chain post {
+	chain "wg-post" {
 		# The chain type must be nat: masquerade is a NAT statement and nft
 		# rejects it inside a filter chain ("Operation not supported").
 		type nat hook postrouting priority srcnat; policy accept;
