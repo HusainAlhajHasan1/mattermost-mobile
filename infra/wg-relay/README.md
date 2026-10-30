@@ -114,6 +114,10 @@ there is no 51820 anywhere unless you ask for it.
 
 ## 4. Quick start
 
+> **No `sudo`?** A minimal Debian/Ubuntu container often ships without it. If you
+> are already `root`, just drop the `sudo` from every command below — the scripts
+> only need root privileges, not a particular way of obtaining them.
+
 Copy this folder to both machines:
 
 ```bash
