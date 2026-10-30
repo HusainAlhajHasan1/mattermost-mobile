@@ -1,0 +1,84 @@
+# =============================================================================
+#  relay.conf — the configuration shared by both machines
+#
+#  Copy this file next to the script, then run the home side first. The script
+#  fills in the values it picks (RELAY_PORT, UDP2RAW_KEY, the local ports) and
+#  keeps the master copy at /etc/wireguard-relay/relay.conf — copy THAT file to
+#  the VPS afterwards.
+#
+#  Everything here can also be given on the command line, e.g.
+#     ./vps-setup.sh --home-dests "10.10.0.0/24" --dash-domain vpn.example.com
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# the two public addresses
+# ---------------------------------------------------------------------------
+HOME_PUBLIC_IP="94.183.52.210"      # static IP in front of the home server
+VPS_PUBLIC_IP="5.75.198.81"         # public IP of the VPS (empty = auto-detect)
+
+# ---------------------------------------------------------------------------
+# WHAT THE CLIENTS MAY REACH  (this is the whole point of the setup)
+#   one or more networks/IPs, comma or space separated
+#   Examples:
+#     HOME_DESTS="10.10.0.0/24"                        # the whole home LAN
+#     HOME_DESTS="10.10.0.5/32, 10.10.0.53/32"         # only Mattermost + AdGuard
+#   Everything outside this list stays unreachable — on the VPS and at home.
+# ---------------------------------------------------------------------------
+HOME_DESTS="10.10.0.0/24"
+
+# Optional DNS pushed into the clients' configs. Must be inside HOME_DESTS.
+# Put your home AdGuard here so that Mattermost can be reached by name.
+HOME_DNS=""
+
+# ---------------------------------------------------------------------------
+# the udp2raw tunnel (0 = pick a free port automatically, recommended)
+# ---------------------------------------------------------------------------
+RELAY_PORT=0                        # public port on the home side (TCP+UDP forward!)
+UDP2RAW_MODE="faketcp"              # faketcp (best against DPI) | udp | icmp
+UDP2RAW_KEY=""                      # generated on the first home run
+UDP2RAW_LOCAL_PORT=0                # VPS: 127.0.0.1 port the uplink talks to
+WG_RELAY_LOCAL_PORT=0               # home: local port the WireGuard endpoint binds
+UDP2RAW_BIN=""                      # path to udp2raw if it is not in a standard place
+UDP2RAW_EXTRA_ARGS=""               # e.g. "--fix-gro" if you see packet loss
+
+# ---------------------------------------------------------------------------
+# addressing (only change this if it clashes with something you already run)
+# ---------------------------------------------------------------------------
+CLIENT_IFACE="wgvpn0"               # VPS: the clients' WireGuard interface
+RELAY_IFACE="wgrelay0"              # both: the tunnel between VPS and home
+CLIENT_NET="10.66.0.0/24"           # VPN addresses given to clients
+RELAY_VPS_IP="10.67.0.2"            # point-to-point address on the VPS
+RELAY_HOME_IP="10.67.0.1"           # point-to-point address at home
+CLIENT_LISTEN_PORT=0                # VPS: public UDP port for the clients
+RELAY_MTU=1280
+CLIENT_MTU=1280
+MSS_CLAMP=1240
+
+# ---------------------------------------------------------------------------
+# dashboard (VPS only)
+# ---------------------------------------------------------------------------
+DASH_PORT=8080
+DASH_BIND="127.0.0.1"               # keep it on localhost + ssh tunnel, or use a domain
+DASH_DOMAIN=""                      # e.g. "vpn.example.com" (needs Caddy on the VPS)
+DASH_EMAIL=""                       # certificate contact address
+DASH_USER="admin"
+DASH_PASS=""                        # empty = generated, see /etc/wireguard-relay/dashboard-admin.txt
+DASH_ALLOW_FROM=""                  # only used with DASH_BIND=0.0.0.0: allow this source IP
+DASH_TELEGRAM_TOKEN=""              # optional, the dashboard's own Telegram bot
+DASH_TELEGRAM_ADMIN=""              # your Telegram chat id
+
+# ---------------------------------------------------------------------------
+# home side policy
+# ---------------------------------------------------------------------------
+# Clients that reach a machine OTHER than the relay host (Mattermost in its own
+# LXC, AdGuard somewhere else) need NAT, otherwise their replies are lost at
+# the LAN gateway. Keep "yes" unless every destination host has a route for
+# 10.66.0.0/24 via 10.67.0.1.
+HOME_SNAT="yes"
+
+# local services on the relay host itself that tunnel clients may use
+HOME_ALLOW_TCP="80 443 8065"
+HOME_ALLOW_UDP="53"
+
+# leave empty to auto-detect
+HOME_LAN_IFACE=""
