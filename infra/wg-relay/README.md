@@ -1,11 +1,5 @@
 # wg-relay
 
-> **This is the generic copy.** It is the service-agnostic version of the setup
-> (also published as the standalone project [`wg-relay`](https://github.com/HusainAlhajHasan1/wg-relay)
-> once the repository exists). The Mattermost-tuned version — with the exact
-> commands for this home + VPS pair, the dashboard walkthrough and the rollback
-> chapter — is in [`../wireguard-relay/`](../wireguard-relay/README.md).
-
 **WireGuard clients → your VPS → an obfuscated udp2raw tunnel → one machine in
 your LAN.**
 

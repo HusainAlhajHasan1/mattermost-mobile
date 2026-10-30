@@ -13,6 +13,12 @@ run on either machine.
 * Configuring that by hand is a lot of error-prone work, so this folder contains
   two scripts that do it (plus one config file).
 
+> Want the same tunnel for a service other than Mattermost? The service-agnostic
+> copy (generic README, recipes for Nextcloud / Home Assistant / NAS / RDP /
+> cameras, AGPL-3.0) is in [`../wg-relay/`](../wg-relay/README.md) and as the
+> standalone project
+> [`wg-relay`](https://github.com/HusainAlhajHasan1/wg-relay).
+
 ```
 infra/wireguard-relay/
 ├── home-setup.sh          <- run this on the home machine (Mattermost side)
