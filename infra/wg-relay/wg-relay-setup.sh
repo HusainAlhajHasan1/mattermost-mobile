@@ -32,7 +32,7 @@
 # =============================================================================
 set -Eeuo pipefail
 
-VERSION="1.0.3"
+VERSION="1.0.4"
 PROG="${0##*/}"
 SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/${BASH_SOURCE[0]##*/}"
 
@@ -69,6 +69,7 @@ CLIENT_LISTEN_PORT=0               # VPS: public UDP port for clients (0=auto)
 DASH_REPO="https://github.com/HusainAlhajhasan1/wireguard-dashboard"  # any compatible dashboard
 DASH_BRANCH="main"
 DASH_SRC_DIR="/opt/wireguard-dashboard-src"
+DASH_INSTALL_DIR="/opt/wireguard-dashboard"
 DASH_PORT=8080
 DASH_BIND="127.0.0.1"
 DASH_DOMAIN=""
@@ -109,6 +110,7 @@ PEER_PUBKEY=""
 PEER_SSH=""
 CONFIG_FILE=""
 declare -A OVERRIDES=()
+DASH_BROKEN=0
 UDP2RAW=""
 
 # ----------------------------------------------------------------------------
@@ -1402,9 +1404,13 @@ open_relay_port() {
 # ----------------------------------------------------------------------------
 # the dashboard
 # ----------------------------------------------------------------------------
-dashboard_installed() { [[ -x /opt/wireguard-dashboard/venv/bin/python && -r /etc/wireguard-dashboard/config.json ]]; }
+# "installed" means the CLI wrapper exists too: install.sh aborts before writing it
+# when its own wgdash call fails, and a half-installed dashboard must be redone.
+dashboard_installed() { [[ -x /usr/local/bin/wgdash && -x /opt/wireguard-dashboard/venv/bin/python && -r /etc/wireguard-dashboard/config.json ]]; }
 
-dash_cli() { /usr/local/bin/wgdash "$@"; }
+dash_cli() {   # `python -m wgdash.cli` needs the install dir as cwd
+    ( cd "$DASH_INSTALL_DIR" 2>/dev/null || return 1; /usr/local/bin/wgdash "$@" )
+}
 
 install_dashboard() {
     step "WireGuard dashboard (client-facing UI)"
@@ -1457,8 +1463,12 @@ install_dashboard() {
                     --endpoint "$VPS_PUBLIC_IP:$CLIENT_LISTEN_PORT")
         if [[ -n $DASH_TELEGRAM_TOKEN ]]; then args+=(--telegram-token "$DASH_TELEGRAM_TOKEN"); fi
         if [[ -n $DASH_TELEGRAM_ADMIN ]]; then args+=(--telegram-admin "$DASH_TELEGRAM_ADMIN"); fi
-        bash "$DASH_SRC_DIR/install.sh" "${args[@]}" \
-            || die "the dashboard installer failed"
+        # install.sh calls `python -m wgdash.cli` and never cds itself, so the
+        # cwd must be the source tree that contains the wgdash/ package
+        ( cd "$DASH_SRC_DIR" && bash ./install.sh "${args[@]}" ) \
+            || { warn "the dashboard installer failed — the relay itself is installed and working without it"
+                 warn "re-run the same command to retry; everything already done is kept"
+                 DASH_BROKEN=1; }
     fi
 
     # ---- client defaults: split tunnel towards HOME_DESTS only ------------
@@ -1968,7 +1978,8 @@ admin_cred() {   # $1 = field name in dashboard-admin.txt
 }
 
 print_vps_summary() {
-    local dash_url dash_user dash_pass
+    local dash_url dash_user dash_pass first_dest
+    first_dest=${HOME_DESTS_LIST%%,*}
     dash_url="http://$DASH_BIND:$DASH_PORT"
     dash_user=$(admin_cred username)
     dash_pass=$(admin_cred password)
@@ -2007,12 +2018,13 @@ ${C_B}────────────────────────�
      journalctl -u $UNIT_UDP2RAW -n 30 --no-pager
 
   ${C_B}From a client${C_R} (a peer created in the dashboard):
-     ping 10.10.0.5            # the host you want to reach  -> must work
-     curl -k https://10.10.0.5 # must work
+     ping $first_dest          # the host you want to reach  -> must work
      ping $VPS_PUBLIC_IP       # must FAIL (isolation works)
-     curl -k https://$VPS_PUBLIC_IP  # must FAIL
 
 EOF
+    if (( DASH_BROKEN )); then
+        warn "the dashboard is NOT installed (the relay is) — re-run the same command to retry"
+    fi
 }
 
 # ----------------------------------------------------------------------------
