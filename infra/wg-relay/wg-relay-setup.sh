@@ -1060,7 +1060,9 @@ EOF
 	# being lost at the LAN gateway. Set HOME_SNAT="no" once every destination
 	# host has a route for $client_elems via $RELAY_HOME_IP.
 	chain postrouting {
-		type filter hook postrouting priority srcnat; policy accept;
+		# The chain type must be nat: masquerade is a NAT statement and nft
+		# rejects it inside a filter chain ("Operation not supported").
+		type nat hook postrouting priority srcnat; policy accept;
 		ip saddr @client_nets ip daddr @home_nets masquerade
 	}
 EOF
@@ -1116,7 +1118,14 @@ apply_fw() {
         if ! out=$(nft -f "$FW_FILE" 2>&1); then
             printf '%s\n' "$out" >&2
             if grep -qi "operation not supported" <<<"$out" && grep -q masquerade "$FW_FILE"; then
-                die "$(nat_hint)"
+                # only claim a host-module problem if NAT really is unavailable;
+                # otherwise the ruleset itself is wrong
+                local nat_out=""
+                if ! nat_out=$(nat_probe); then
+                    die "$(nat_hint "$nat_out")"
+                fi
+                die "nftables rejected the masquerade rule although NAT works here — please report this ruleset:
+    $FW_FILE"
             fi
             die "nftables rejected $FW_FILE (see message above)"
         fi
