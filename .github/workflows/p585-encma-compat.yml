@@ -1,0 +1,174 @@
+---
+name: Experimental ENCMA Android 8.1 compatibility build
+
+on:
+  push:
+    branches:
+      - arena/6ccbd69f-mattermost-mobile
+    paths:
+      - .github/workflows/p585-encma-compat.yml
+      - scripts/p585-encma/**
+      - scripts/tests/test_p585_encma_compat.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  checks: write
+
+jobs:
+  build-and-smoke-test:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 100
+    steps:
+      - name: Checkout the exact ENCMA source from the requested run
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: 4a9471207b14d41f5ffec2bf6b547061e8df7949
+          persist-credentials: false
+
+      - name: Checkout compatibility scripts from this workflow's branch
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.sha }}
+          path: .p585-tools
+          persist-credentials: false
+
+      - name: Verify source and prepare the experimental minimum SDK
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = 4a9471207b14d41f5ffec2bf6b547061e8df7949
+          python3 .p585-tools/scripts/tests/test_p585_encma_compat.py -q
+          python3 .p585-tools/scripts/p585-encma/prepare_source.py .
+
+      - name: Prepare Node dependencies
+        uses: ./.github/actions/prepare-node-deps
+
+      - name: Test the VPN startup and screen logic
+        run: |
+          set -o pipefail
+          NODE_OPTIONS=--max_old_space_size=4096 npx jest --runInBand --runTestsByPath \
+            app/screens/vpn/index.test.tsx \
+            app/managers/wireguard_manager.test.ts \
+            app/routes/index.test.tsx 2>&1 | tee "$RUNNER_TEMP/p585-jest.log"
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@ad2b38190b15e4d6bdf0c97fb4fca8412226d287 # v5.3.0
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Jetify Android libraries
+        run: ./node_modules/.bin/jetify
+
+      - name: Build ARM and emulator APKs without overriding dependency checks
+        working-directory: android
+        run: |
+          set -o pipefail
+          ./gradlew :app:assembleRelease -PseparateApk=true \
+            -PreactNativeArchitectures=armeabi-v7a,x86_64 --stacktrace \
+            2>&1 | tee "$RUNNER_TEMP/p585-gradle-build.log"
+
+      - name: Verify APK metadata, signatures, ABI libraries, and hashes
+        id: apks
+        run: |
+          set -euo pipefail
+          mapfile -t arm_files < <(find android/app/build/outputs/apk/release -maxdepth 1 -type f -name '*armeabi-v7a*.apk')
+          mapfile -t x86_files < <(find android/app/build/outputs/apk/release -maxdepth 1 -type f -name '*x86_64*.apk')
+          test "${#arm_files[@]}" -eq 1
+          test "${#x86_files[@]}" -eq 1
+          arm="${arm_files[0]}"
+          x86="${x86_files[0]}"
+          echo "arm=$arm" >> "$GITHUB_OUTPUT"
+          echo "x86=$x86" >> "$GITHUB_OUTPUT"
+          aapt_bin="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)"
+          signer_bin="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          test -x "$aapt_bin" && test -x "$signer_bin"
+          for entry in "$arm:armeabi-v7a" "$x86:x86_64"; do
+            apk="${entry%:*}"
+            abi="${entry##*:}"
+            badging="$RUNNER_TEMP/p585-$abi-badging.txt"
+            "$aapt_bin" dump badging "$apk" | tee "$badging"
+            grep -F "package: name='com.encma.hxmain'" "$badging"
+            grep -F "application: label='ENCMA'" "$badging"
+            grep -F "sdkVersion:'27'" "$badging"
+            grep -F "native-code: '$abi'" "$badging"
+            "$signer_bin" verify --verbose --print-certs "$apk"
+          done > >(tee "$RUNNER_TEMP/p585-verify.log") 2>&1
+          python3 .p585-tools/scripts/p585-encma/inspect_apks.py "$arm" "$x86" | tee -a "$RUNNER_TEMP/p585-verify.log"
+          sha256sum "$arm" "$x86" | tee -a "$RUNNER_TEMP/p585-verify.log"
+
+      - name: Run Android unit tests
+        working-directory: android
+        run: |
+          set -o pipefail
+          ./gradlew :app:testReleaseUnitTest -PseparateApk=true \
+            -PreactNativeArchitectures=armeabi-v7a,x86_64 --stacktrace \
+            2>&1 | tee "$RUNNER_TEMP/p585-gradle-tests.log"
+
+      - name: Enable emulator acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666"' | sudo tee /etc/udev/rules.d/99-kvm-p585.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo udevadm settle
+          test -r /dev/kvm && test -w /dev/kvm
+
+      - name: Smoke-test the sibling build on Android 8.1
+        uses: ReactiveCircus/android-emulator-runner@1dcd0090116d15e7c562f8db72807de5e036a4ed # v2.34.0
+        with:
+          api-level: 27
+          target: google_apis
+          arch: x86_64
+          profile: pixel_2
+          ram-size: 2048M
+          disable-animations: true
+          disable-linux-hw-accel: false
+          script: bash -o pipefail -c 'bash .p585-tools/scripts/p585-encma/emulator_smoke.sh "$1" 2>&1 | tee "$RUNNER_TEMP/p585-emulator.log"' _ '${{ steps.apks.outputs.x86 }}'
+
+      - name: Upload the experimental ARM APK
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: encma-experimental-android81-armeabi-v7a
+          path: ${{ steps.apks.outputs.arm }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish concise verification or failure details
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib
+          temp = pathlib.Path(os.environ['RUNNER_TEMP'])
+          status = os.environ['JOB_STATUS']
+          names = ['p585-jest.log', 'p585-gradle-build.log', 'p585-verify.log',
+                   'p585-gradle-tests.log', 'p585-emulator.log']
+          sections = []
+          for name in names:
+              path = temp / name
+              if path.is_file():
+                  data = path.read_bytes().decode('utf-8', 'replace')
+                  marker = data.rfind('FAILURE: Build failed with an exception.')
+                  if marker >= 0:
+                      text = data[marker:marker + 7000] + '\n...tail...\n' + data[-2000:]
+                  else:
+                      text = data[-9000:]
+                  sections.append('### ' + name + '\n```\n' + text + '\n```')
+          details = '\n'.join(sections) or 'Failure occurred before a diagnostic log was produced.'
+          payload = {
+              'name': 'p585-encma-compat-diagnostics',
+              'head_sha': os.environ['GITHUB_SHA'],
+              'status': 'completed',
+              'conclusion': 'success' if status == 'success' else 'failure',
+              'details_url': os.environ['GITHUB_SERVER_URL'] + '/' + os.environ['GITHUB_REPOSITORY'] + '/actions/runs/' + os.environ['GITHUB_RUN_ID'],
+              'output': {
+                  'title': 'Experimental Android 8.1 ENCMA build: ' + status,
+                  'summary': 'See the recorded build, APK checks and emulator result. The physical ARM tablet and live VPN remain untested.',
+                  'text': details[-60000:],
+              },
+          }
+          (temp / 'p585-check.json').write_text(json.dumps(payload))
+          PY
+          gh api "repos/$GITHUB_REPOSITORY/check-runs" --method POST --input "$RUNNER_TEMP/p585-check.json" >/dev/null || true
