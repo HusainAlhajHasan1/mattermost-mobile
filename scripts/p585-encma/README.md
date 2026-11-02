@@ -7,14 +7,20 @@ The user's existing SM-P585 installation reported Android 8.1/API 27 and
 `armeabi-v7a`. That original APK is not suitable for that OS.
 
 The workflow `.github/workflows/p585-encma-compat.yml` checks out that exact
-source separately, checks the known `android/build.gradle` digest, changes only
-its `minSdkVersion` from 30 to 27, and builds ARMv7 and x86 ABI splits. It
-does **not** suppress Android library manifest minimum-SDK errors. It verifies
-package ID, app label, min SDK, signatures, native ELF architecture, key React
-Native/Hermes/WireGuard libraries, library-set parity, and APK SHA-256. It then
-runs native tests and starts the x86 sibling on a fresh Android 8.1 emulator,
-requiring the WireGuard configuration screen to render before uploading the ARM
-APK. Synthetic tests cover the patch and content checks.
+source separately, verifies the known digests of two files, and changes only:
+
+- `android/build.gradle`: `minSdkVersion` from 30 to 27.
+- `RNUtilsModuleImpl.kt`: guard navigation-bar contrast and divider APIs behind
+  their actual Android 10 and Android 9 minimum versions, respectively. The
+  unguarded contrast call crashed during the API-27 emulator test.
+
+It builds ARMv7 and x86 ABI splits without suppressing Android library manifest
+minimum-SDK errors. It verifies package ID, app label, min SDK, signatures,
+native ELF architecture, key React Native/Hermes/WireGuard libraries, coverage
+of the x86 library names on ARM, and APK SHA-256. It then runs native tests and
+starts the x86 sibling on a fresh Android 8.1 emulator, requiring the WireGuard
+configuration screen to render before uploading the ARM APK. Synthetic tests
+cover the patches and content checks.
 
 Important boundaries:
 

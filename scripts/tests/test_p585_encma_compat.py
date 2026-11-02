@@ -35,15 +35,27 @@ class PrepareTests(unittest.TestCase):
         self.path.parent.mkdir()
         self.content = b"buildscript {\n    ext {\n" + prepare.OLD_SETTING + b"    }\n}\n"
         self.path.write_bytes(self.content)
+        self.utils_path = self.root / prepare.RNUTILS_PATH
+        self.utils_path.parent.mkdir(parents=True)
+        self.utils_content = b"class RNUtilsModuleImpl {\n" + prepare.OLD_NAVIGATION + b"}\n"
+        self.utils_path.write_bytes(self.utils_content)
 
-    def expected_hash(self, content):
-        return mock.patch.object(prepare, "BUILD_GRADLE_SHA256", hashlib.sha256(content).hexdigest())
+    def expected_hash(self, content, utils_content=None):
+        if utils_content is None:
+            utils_content = self.utils_content
+        return mock.patch.multiple(
+            prepare,
+            BUILD_GRADLE_SHA256=hashlib.sha256(content).hexdigest(),
+            RNUTILS_SHA256=hashlib.sha256(utils_content).hexdigest(),
+        )
 
-    def test_only_the_exact_setting_changes(self):
+    def test_only_the_exact_setting_and_navigation_block_change(self):
         with self.expected_hash(self.content):
             result = prepare.prepare(self.root)
         expected = self.content.replace(prepare.OLD_SETTING, prepare.NEW_SETTING)
+        expected_utils = self.utils_content.replace(prepare.OLD_NAVIGATION, prepare.NEW_NAVIGATION)
         self.assertEqual(self.path.read_bytes(), expected)
+        self.assertEqual(self.utils_path.read_bytes(), expected_utils)
         self.assertEqual(result, hashlib.sha256(expected).hexdigest())
 
     def test_unexpected_source_is_not_modified(self):
@@ -64,6 +76,28 @@ class PrepareTests(unittest.TestCase):
         with self.expected_hash(content), self.assertRaisesRegex(ValueError, "single"):
             prepare.prepare(self.root)
         self.assertEqual(self.path.read_bytes(), content)
+
+    def test_unexpected_utils_is_not_modified_and_gradle_is_untouched(self):
+        altered = self.utils_content + b"changed\n"
+        self.utils_path.write_bytes(altered)
+        with self.expected_hash(self.content), self.assertRaisesRegex(ValueError, "RNUtils.*SHA-256"):
+            prepare.prepare(self.root)
+        self.assertEqual(self.path.read_bytes(), self.content)
+        self.assertEqual(self.utils_path.read_bytes(), altered)
+
+    def test_ambiguous_utils_block_is_not_modified(self):
+        altered = self.utils_content + prepare.OLD_NAVIGATION
+        self.utils_path.write_bytes(altered)
+        with self.expected_hash(self.content, altered), self.assertRaisesRegex(ValueError, "navigation-bar"):
+            prepare.prepare(self.root)
+        self.assertEqual(self.path.read_bytes(), self.content)
+        self.assertEqual(self.utils_path.read_bytes(), altered)
+
+    def test_missing_utils_fails_before_writing_gradle(self):
+        self.utils_path.unlink()
+        with self.expected_hash(self.content), self.assertRaises(FileNotFoundError):
+            prepare.prepare(self.root)
+        self.assertEqual(self.path.read_bytes(), self.content)
 
     def test_missing_source_fails_without_creating_file(self):
         self.path.unlink()

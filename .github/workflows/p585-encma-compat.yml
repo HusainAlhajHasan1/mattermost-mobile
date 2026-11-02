@@ -47,6 +47,12 @@ jobs:
       - name: Prepare Node dependencies
         uses: ./.github/actions/prepare-node-deps
 
+      - name: Verify the patched RNUtils dependency is used
+        run: |
+          set -euo pipefail
+          suffix=android/src/main/java/com/mattermost/rnutils/RNUtilsModuleImpl.kt
+          cmp "libraries/@mattermost/rnutils/$suffix" "node_modules/@mattermost/rnutils/$suffix"
+
       - name: Test the VPN startup and screen logic
         run: |
           set -o pipefail
@@ -60,6 +66,18 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+
+      - name: Restore Gradle dependencies and task outputs for compatibility retries
+        id: gradle-cache
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        continue-on-error: true
+        with:
+          path: |
+            ~/.gradle/caches/build-cache-1
+            ~/.gradle/caches/modules-2
+            ~/.gradle/wrapper
+          key: p585-encma-gradle-v1-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: p585-encma-gradle-v1-
 
       - name: Jetify Android libraries
         run: ./node_modules/.bin/jetify
@@ -109,6 +127,16 @@ jobs:
           ./gradlew :app:testReleaseUnitTest -PseparateApk=true \
             -PreactNativeArchitectures=armeabi-v7a,x86 --stacktrace \
             2>&1 | tee "$RUNNER_TEMP/p585-gradle-tests.log"
+
+      - name: Save Gradle cache before the emulator test
+        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        continue-on-error: true
+        with:
+          path: |
+            ~/.gradle/caches/build-cache-1
+            ~/.gradle/caches/modules-2
+            ~/.gradle/wrapper
+          key: ${{ steps.gradle-cache.outputs.cache-primary-key }}
 
       - name: Save intermediate APKs for emulator troubleshooting only
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
