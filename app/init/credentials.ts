@@ -4,6 +4,7 @@
 import {Platform} from 'react-native';
 import * as KeyChain from 'react-native-keychain';
 
+import {CALCULATOR_LOCK_KEYCHAIN_SERVICE} from '@constants/calculator_lock';
 import DatabaseManager from '@database/manager';
 import {getFullErrorMessage} from '@utils/errors';
 import {logDebug, logWarning} from '@utils/log';
@@ -83,10 +84,10 @@ const getAllKeychainServerUrls = async (): Promise<string[]> => {
         return KeyChain.getAllInternetPasswordServers();
     }
 
-    // Android lists every generic-password alias, which includes our per-server pre-auth aliases
-    // and, before the migration runs, the legacy shared empty alias.
+    // Android lists every generic-password alias, which includes our per-server pre-auth aliases,
+    // the Calculator Lock PIN alias, and, before the migration runs, the legacy shared empty alias.
     const services = await KeyChain.getAllGenericPasswordServices();
-    return services.filter((service) => service && !service.startsWith(ANDROID_PREAUTH_SERVICE_PREFIX));
+    return services.filter((service) => service && !service.startsWith(ANDROID_PREAUTH_SERVICE_PREFIX) && service !== CALCULATOR_LOCK_KEYCHAIN_SERVICE);
 };
 
 export const getAllServerCredentials = async (knownServerUrls?: string[]): Promise<ServerCredential[]> => {

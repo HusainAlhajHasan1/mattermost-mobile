@@ -1,6 +1,8 @@
 package com.mattermost.rnutils
 
 import android.app.Activity
+import android.content.ComponentName
+import android.content.pm.PackageManager
 import android.graphics.Color
 import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
@@ -10,6 +12,7 @@ import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReadableMap
 import com.facebook.react.bridge.WritableMap
+import com.mattermost.rnutils.helpers.CalculatorLockHelper
 import com.mattermost.rnutils.helpers.Notifications
 import com.mattermost.rnutils.helpers.RealPathUtil
 import com.mattermost.rnutils.helpers.SaveDataTask
@@ -215,6 +218,48 @@ class RNUtilsModuleImpl(private val reactContext: ReactApplicationContext): Life
 
     fun removeServerNotifications(serverUrl: String?) {
         serverUrl?.let { Notifications.removeServerNotifications(it) }
+    }
+
+    fun removeAllDeliveredNotifications() {
+        Notifications.removeAllDeliveredNotifications()
+    }
+
+    fun setCalculatorLockEnabled(enabled: Boolean) {
+        CalculatorLockHelper.setCalculatorLockEnabled(reactContext.applicationContext, enabled)
+    }
+
+    fun getCalculatorLockEnabled(): Boolean {
+        return CalculatorLockHelper.isCalculatorLockEnabled(reactContext.applicationContext)
+    }
+
+    fun changeAppIcon(iconName: String?, promise: Promise?) {
+        try {
+            val packageName = reactContext.packageName
+            val mainActivity = ComponentName(packageName, "$packageName.MainActivity")
+            val calculatorAlias = ComponentName(packageName, "$packageName.MainActivityCalculator")
+            val useCalculator = iconName == "Calculator"
+
+            val packageManager = reactContext.packageManager
+
+            // Enable the incoming launcher component before disabling the
+            // outgoing one so the package always keeps a launchable entry.
+            // DONT_KILL_APP prevents the running process from being killed
+            // when the component that launched it is disabled.
+            packageManager.setComponentEnabledSetting(
+                    if (useCalculator) calculatorAlias else mainActivity,
+                    PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
+                    PackageManager.DONT_KILL_APP
+            )
+            packageManager.setComponentEnabledSetting(
+                    if (useCalculator) mainActivity else calculatorAlias,
+                    PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                    PackageManager.DONT_KILL_APP
+            )
+
+            promise?.resolve(true)
+        } catch (e: Exception) {
+            promise?.reject("change_app_icon_error", e.message, e)
+        }
     }
 
     fun beginDatabaseActivity(serverUrl: String?, task: String?, promise: Promise?) {

@@ -124,6 +124,24 @@ RCT_REMAP_METHOD(removeServerNotifications, serverUrl:(NSString *)serverUrl) {
     [self removeServerNotifications:serverUrl];
 }
 
+RCT_REMAP_METHOD(removeAllDeliveredNotifications, removeAllDeliveredNotificationsJS) {
+    [self removeAllDeliveredNotifications];
+}
+
+RCT_REMAP_METHOD(setCalculatorLockEnabled, setCalculatorLockEnabledWithEnabled:(BOOL)enabled) {
+    [wrapper setCalculatorLockEnabled:enabled];
+}
+
+RCT_REMAP_BLOCKING_SYNCHRONOUS_METHOD(getCalculatorLockEnabled, NSNumber*, getCalculatorLockEnabledJS) {
+    return @([wrapper getCalculatorLockEnabled]);
+}
+
+RCT_EXPORT_METHOD(changeAppIcon:(NSString *)iconName
+                  withResolver:(RCTPromiseResolveBlock)resolve
+                  withRejecter:(RCTPromiseRejectBlock)reject) {
+    [self changeAppIcon:iconName resolve:resolve reject:reject];
+}
+
 RCT_EXPORT_METHOD(getRealFilePath:(NSString *)filePath
                   withResolver:(RCTPromiseResolveBlock)resolve
                   withRejecter:(RCTPromiseRejectBlock)reject) {
@@ -225,6 +243,28 @@ RCT_EXPORT_METHOD(createZipFile:(NSArray<NSString *> *)paths
 
 - (void)removeServerNotifications:(NSString *)serverUrl {
     [[NotificationManager shared] removeServerNotificationsWithServerUrl:serverUrl];
+}
+
+- (void)removeAllDeliveredNotifications {
+    [[NotificationManager shared] removeAllDeliveredNotifications];
+}
+
+- (void)setCalculatorLockEnabled:(BOOL)enabled {
+    [wrapper setCalculatorLockEnabled:enabled];
+}
+
+- (NSNumber *)getCalculatorLockEnabled {
+    return @([wrapper getCalculatorLockEnabled]);
+}
+
+- (void)changeAppIcon:(NSString *)iconName resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {
+    [wrapper changeAppIcon:iconName ?: @"" completion:^(BOOL success, NSError * _Nullable error) {
+        if (error) {
+            reject(@"change_app_icon_error", error.localizedDescription, error);
+        } else {
+            resolve(@(success));
+        }
+    }];
 }
 
 - (void)beginDatabaseActivity:(NSString *)serverUrl task:(NSString *)task resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject {

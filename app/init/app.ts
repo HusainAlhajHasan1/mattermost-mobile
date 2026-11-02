@@ -9,6 +9,7 @@ import {getAllServerCredentials} from '@init/credentials';
 import {migrateLegacyPreauthSecret} from '@init/credentials_migration';
 import ManagedApp from '@init/managed_app';
 import PushNotifications from '@init/push_notifications';
+import CalculatorLockManager from '@managers/calculator_lock_manager';
 import EphemeralModeManager from '@managers/ephemeral_mode_manager';
 import GlobalEventHandler from '@managers/global_event_handler';
 import NetworkManager from '@managers/network_manager';
@@ -86,6 +87,11 @@ export async function initialize() {
     CallsManager.initialize();
     CallsNative.init();
 
+    // Must complete before PushNotifications registers its handlers so the
+    // calculator lock state is known (and the lock is engaged on cold start)
+    // before any notification can be presented.
+    await CalculatorLockManager.init();
+
     PushNotifications.init(serverCredentials.length > 0);
 }
 
@@ -96,6 +102,7 @@ export function cleanup() {
     SessionManager.cleanup();
     CallsManager.cleanup();
     CallsNative.cleanup();
+    CalculatorLockManager.cleanup();
     PushNotifications.cleanup();
     EphemeralModeManager.cleanup();
 }

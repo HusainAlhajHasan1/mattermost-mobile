@@ -16,6 +16,8 @@ import {usePreventDoubleTap} from '@hooks/utils';
 import {navigateBack, navigateToSettingsScreen} from '@screens/navigation';
 import {deleteFileCache, getAllFilesInCachesDirectory, getFormattedFileSize} from '@utils/file';
 
+import CalculatorLockSetting from './calculator_lock_setting';
+
 import type {FileInfo} from 'expo-file-system';
 
 const EMPTY_FILES: FileInfo[] = [];
@@ -99,6 +101,7 @@ const AdvancedSettings = ({
                 />
                 <SettingSeparator/>
             </Pressable>
+            <CalculatorLockSetting/>
             {isDevMode && (
                 <Pressable
                     onPress={onPressComponentLibrary}

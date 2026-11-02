@@ -9,6 +9,7 @@ import com.mattermost.helpers.DatabaseHelper
 import com.mattermost.helpers.Network
 import com.mattermost.helpers.PushNotificationDataHelper
 import com.mattermost.helpers.database_extension.getServerUrlForIdentifier
+import com.mattermost.rnutils.helpers.CalculatorLockHelper
 import com.mattermost.rnutils.helpers.NotificationHelper
 import com.mattermost.turbolog.TurboLog
 import com.wix.reactnativenotifications.Defs.NOTIFICATION_RECEIVED_EVENT_NAME
@@ -105,6 +106,19 @@ class CustomPushNotification(
         val isAppVisible = mAppLifecycleFacade.isAppVisible()
         val isMainActivity = currentActivityName.contains("MainActivity")
         TurboLog.i("CustomPushNotification", currentActivityName)
+
+        if (CalculatorLockHelper.isCalculatorLockEnabled(mContext)) {
+            // Calculator Lock: while the app is disguised, no Mattermost
+            // notification may be displayed. Clear anything already in the
+            // tray and skip building a notification entirely, but still let
+            // JS process the payload silently (e.g. session notifications)
+            // when the React runtime is alive.
+            NotificationHelper.removeAllDeliveredNotifications(mContext)
+            if (isReactInit) {
+                notifyReceivedToJS()
+            }
+            return
+        }
 
         when (type) {
             CustomPushNotificationHelper.PUSH_TYPE_MESSAGE -> {

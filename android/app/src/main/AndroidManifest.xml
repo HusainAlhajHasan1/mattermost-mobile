@@ -95,6 +95,25 @@
           <data android:scheme="mmauthbeta" />
         </intent-filter>
       </activity>
+
+      <!-- Disguised Calculator launcher alias (Calculator Lock). Toggled at
+           runtime by RNUtils.changeAppIcon; never enabled together with
+           .MainActivity's launcher entry. -->
+      <activity-alias
+        android:name=".MainActivityCalculator"
+        android:enabled="false"
+        android:exported="true"
+        android:icon="@mipmap/ic_calculator"
+        android:roundIcon="@mipmap/ic_calculator"
+        android:label="Calculator"
+        android:targetActivity=".MainActivity"
+      >
+        <intent-filter>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent-filter>
+      </activity-alias>
+
       <service android:name=".NotificationDismissService"
                 android:enabled="true"
                 android:exported="false" />

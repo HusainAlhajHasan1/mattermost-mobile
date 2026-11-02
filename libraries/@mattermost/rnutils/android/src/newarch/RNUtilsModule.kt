@@ -69,6 +69,22 @@ class RNUtilsModule(val reactContext: ReactApplicationContext) : NativeRNUtilsSp
         implementation.removeServerNotifications(serverUrl)
     }
 
+    override fun removeAllDeliveredNotifications() {
+        implementation.removeAllDeliveredNotifications()
+    }
+
+    override fun setCalculatorLockEnabled(enabled: Boolean) {
+        implementation.setCalculatorLockEnabled(enabled)
+    }
+
+    override fun getCalculatorLockEnabled(): Boolean {
+        return implementation.getCalculatorLockEnabled()
+    }
+
+    override fun changeAppIcon(iconName: String?, promise: Promise?) {
+        implementation.changeAppIcon(iconName, promise)
+    }
+
     override fun beginDatabaseActivity(serverUrl: String?, task: String?, promise: Promise?) {
         implementation.beginDatabaseActivity(serverUrl, task, promise)
     }

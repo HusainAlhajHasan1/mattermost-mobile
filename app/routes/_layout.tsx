@@ -19,6 +19,7 @@ import {useThemeByAppearanceWithDefault} from '@context/theme';
 import useDidMount from '@hooks/did_mount';
 import {DEFAULT_LOCALE, getTranslations} from '@i18n';
 import {cleanup, initialize} from '@init/app';
+import CalculatorLockContainer from '@screens/calculator_lock';
 import InAppNotificationContainer from '@screens/in_app_notification';
 import ReviewAppContainer from '@screens/review_app';
 import ShareFeedbackContainer from '@screens/share_feedback';
@@ -224,6 +225,8 @@ export default function RootLayout() {
                             <ReviewAppContainer/>
                             <PortalHost name='share_feedback'/>
                             <ShareFeedbackContainer/>
+                            <PortalHost name='calculator_lock'/>
+                            <CalculatorLockContainer/>
                         </PortalProvider>
                     </IntlProvider>
                 </EMMProvider>
