@@ -105,8 +105,11 @@ def allowed_uptodown(url):
         host = (p.hostname or '').lower()
         return (p.scheme == 'https' and p.username is None and p.password is None
                 and p.port in (None, 443) and not p.fragment
-                and any(host == d or host.endswith('.' + d) for d in
-                        ('uptodown.com', 'uptodown.app', 'utdstc.com')))
+                # Uptodown's download service redirects to this exact CDN host.
+                # Do not allow other uptodown.net hosts or its subdomains.
+                and (host == 'dw.uptodown.net' or any(
+                    host == d or host.endswith('.' + d) for d in
+                    ('uptodown.com', 'uptodown.app', 'utdstc.com'))))
     except ValueError:
         return False
 

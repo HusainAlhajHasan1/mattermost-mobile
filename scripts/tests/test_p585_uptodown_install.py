@@ -37,12 +37,17 @@ REAL_FDROID = apps.get_fdroid
 class UrlAndTrustTests(unittest.TestCase):
     def test_only_uptodown_https_hosts_are_accepted(self):
         for url in ('https://www.uptodown.app/eapi/a', 'https://dw.uptodown.com/dwn/file',
-                    'https://stc.utdstc.com/x'):
+                    'https://stc.utdstc.com/x', 'https://dw.uptodown.net/dwn/file',
+                    'https://DW.UPTODOWN.NET:443/dwn/file'):
             self.assertTrue(apps.allowed_uptodown(url), url)
         for url in ('http://uptodown.com/x', 'https://uptodown.com.evil.test/x',
                     'https://evil.test/uptodown.com/x', 'https://u@uptodown.com/x',
                     'https://uptodown.com:444/x', 'https://uptodown.com/#frag',
-                    'file:///etc/passwd', 'https://uptodown.com:abc/x'):
+                    'file:///etc/passwd', 'https://uptodown.com:abc/x',
+                    'http://dw.uptodown.net/dwn/file', 'https://uptodown.net/file',
+                    'https://other.uptodown.net/file', 'https://sub.dw.uptodown.net/file',
+                    'https://dw.uptodown.net.evil.test/file', 'https://u@dw.uptodown.net/file',
+                    'https://dw.uptodown.net:444/file', 'https://dw.uptodown.net/file#fragment'):
             self.assertFalse(apps.allowed_uptodown(url), url)
 
     def test_untrusted_api_and_cdn_redirects_are_not_followed(self):
@@ -51,6 +56,7 @@ class UrlAndTrustTests(unittest.TestCase):
         handler = apps.RestrictedRedirect(True)
         for url in ('https://www.uptodown.app/eapi/b', 'https://evil.test/',
                     'https://www.uptodown.app.evil.test/eapi/a/',
+                    'https://dw.uptodown.net/dwn/file',
                     'http://www.uptodown.app/eapi/a/',
                     'https://user@www.uptodown.app/eapi/a/'):
             with self.subTest(url=url), self.assertRaisesRegex(apps.Stop, 'redirect'):
@@ -58,14 +64,13 @@ class UrlAndTrustTests(unittest.TestCase):
         with self.assertRaisesRegex(apps.Stop, 'redirect'):
             apps.RestrictedRedirect(False).redirect_request(req, None, 302, 'Found', {},
                                                             'https://evil.test/')
-        self.assertIsNotNone(apps.RestrictedRedirect(False).redirect_request(
-            request.Request('https://dw.uptodown.com/x'), None, 302, 'Found', {},
-            'https://dw2.uptodown.com/y'))
-        for header in ('Authorization', 'Cookie', 'Proxy-Authorization'):
-            req = request.Request('https://dw.uptodown.com/x', headers={header: 'secret'})
-            with self.subTest(header=header), self.assertRaisesRegex(apps.Stop, 'credentials'):
-                apps.RestrictedRedirect(False).redirect_request(req, None, 302, 'Found', {},
-                                                                'https://dw2.uptodown.com/y')
+        for target in ('https://dw2.uptodown.com/y', 'https://dw.uptodown.net/y'):
+            self.assertIsNotNone(apps.RestrictedRedirect(False).redirect_request(
+                request.Request('https://dw.uptodown.com/x'), None, 302, 'Found', {}, target))
+            for header in ('Authorization', 'Cookie', 'Proxy-Authorization'):
+                req = request.Request('https://dw.uptodown.com/x', headers={header: 'secret'})
+                with self.subTest(header=header, target=target), self.assertRaisesRegex(apps.Stop, 'credentials'):
+                    apps.RestrictedRedirect(False).redirect_request(req, None, 302, 'Found', {}, target)
 
     def test_api_canonical_redirect_preserves_only_safe_same_origin_request(self):
         handler = apps.RestrictedRedirect(True)
@@ -125,6 +130,48 @@ class UrlAndTrustTests(unittest.TestCase):
         self.assertEqual([s[0] for s in seen], ['POST', 'POST'])
         self.assertEqual(seen[1][1], b'example=one')
         self.assertEqual({k.lower(): v for k, v in seen[1][2].items()}['authorization'], 'Bearer fixture')
+
+    def test_real_urllib_download_redirect_to_net_still_requires_pinned_hash(self):
+        from urllib.response import addinfourl
+        payload = b'synthetic APK bytes'
+        digest = hashlib.sha256(payload).hexdigest()
+        seen = []
+
+        class FakeHTTPS(request.HTTPSHandler):
+            def https_open(self, req):
+                seen.append((req.full_url, dict(req.header_items())))
+                headers = Message()
+                if parse.urlsplit(req.full_url).hostname == 'dw.uptodown.com':
+                    headers['Location'] = 'https://dw.uptodown.net/dwn/file?token=fixture'
+                    response = addinfourl(io.BytesIO(b''), headers, req.full_url, 302)
+                    response.msg = 'Found'
+                    return response
+                self.assert_target(req.full_url)
+                response = addinfourl(io.BytesIO(payload), headers, req.full_url, 200)
+                response.msg = 'OK'
+                return response
+
+            @staticmethod
+            def assert_target(url):
+                if parse.urlsplit(url).hostname != 'dw.uptodown.net':
+                    raise AssertionError('Unexpected redirected host')
+
+        client = apps.Uptodown()
+        real_opener = request.build_opener
+        with tempfile.TemporaryDirectory() as temp, \
+             mock.patch.object(request, 'build_opener',
+                               side_effect=lambda handler: real_opener(handler, FakeHTTPS())), \
+             mock.patch.object(client, 'download_url', return_value='https://dw.uptodown.com/dwn/file'):
+            apk = Path(temp) / 'store.apk'
+            client.download_apk('1', '2', digest, apk, 1000)
+            self.assertEqual(apk.read_bytes(), payload)
+            with self.assertRaisesRegex(apps.Stop, 'SHA-256'):
+                client.download_apk('1', '2', '0' * 64, Path(temp) / 'bad.apk', 1000)
+        self.assertEqual([parse.urlsplit(url).hostname for url, _ in seen],
+                         ['dw.uptodown.com', 'dw.uptodown.net'] * 2)
+        for _url, headers in seen:
+            self.assertTrue({'authorization', 'cookie', 'proxy-authorization'}.isdisjoint(
+                key.lower() for key in headers))
 
     def test_authentication_posts_anonymous_hmac_and_uses_returned_bearer(self):
         calls = []

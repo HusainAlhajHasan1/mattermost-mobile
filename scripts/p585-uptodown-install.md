@@ -61,7 +61,9 @@ install it without a separately established fingerprint.
   `47e70d9ed13da9228277f8f8b7cb564b845074a71fd0afb118650a52cedacdbe`
   and an Instagram signing-certificate fingerprint. APKMirror provides the
   independent fingerprint only; the script downloads solely from Uptodown.
-  Uptodown's availability of these *exact* bytes is not established.
+  Uptodown's availability of these *exact* bytes is not established. Other
+  APK-labelled 378.0.0.52.68 variants observed in its catalogue have different
+  hashes, so the script does not substitute them for the pinned build.
 - F-Droid: official
   [`org.fdroid.fdroid_1023052.apk`](https://f-droid.org/repo/org.fdroid.fdroid_1023052.apk)
   and its detached signature embedded in the script. The pinned signing-key
@@ -79,8 +81,13 @@ install it without a separately established fingerprint.
   store a bearer token on disk. It follows API redirects only when HTTPS stays
   on the exact same API origin and endpoint (ignoring a trailing slash),
   preserving the request method. A bearer token is never sent to a different
-  origin or CDN. Other unexpected redirects stop safely; the error prints only
-  their stage and origin (not paths, query strings, userinfo or literal IPs).
+  origin or CDN. Unauthenticated downloads may follow an HTTPS redirect to
+  the exact host `dw.uptodown.net`, observed for the store download; other
+  `uptodown.net` hosts and subdomains are not allowed. File redirects cannot
+  carry authorization headers or cookies, and downloaded bytes must still
+  match the pinned SHA-256 before installation. Other unexpected redirects
+  stop safely; the error prints only their stage and origin (not paths, query
+  strings, userinfo or literal IPs).
 
 The script and unit tests were developed without access to the tablet and
 without fetching the real APK binaries or testing the live Uptodown API.
