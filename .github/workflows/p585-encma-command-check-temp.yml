@@ -1,0 +1,27 @@
+name: Verify ENCMA installer download command
+
+on:
+  push:
+    branches:
+      - arena/6ccbd69f-mattermost-mobile
+    paths:
+      - .github/workflows/p585-encma-command-check-temp.yml
+
+permissions:
+  contents: read
+
+jobs:
+  verify-command:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - name: Verify anonymous script download and checksum
+        run: |
+          set -euo pipefail
+          file="$(mktemp)"
+          env -u GH_TOKEN -u GITHUB_TOKEN curl -q -fsSL --proto '=https' --proto-redir '=https' --max-time 120 \
+            -H 'Accept: application/vnd.github.raw+json' \
+            'https://api.github.com/repos/HusainAlhajHasan1/mattermost-mobile/contents/scripts/p585-encma-install.py?ref=84de07be25a593827a2e1d58cf5d3bf1e31fd825' -o "$file"
+          printf '%s  %s\n' '2f793bdd617e98a848e272237735cc8d8c2655f04f5043701732f217215b6596' "$file" | sha256sum -c -
+          python3 -m py_compile "$file"
+          rm -f "$file"
