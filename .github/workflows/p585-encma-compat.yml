@@ -31,6 +31,10 @@ jobs:
         with:
           ref: ${{ github.sha }}
           path: .p585-tools
+          sparse-checkout: |
+            scripts/p585-encma/
+            scripts/tests/test_p585_encma_compat.py
+          sparse-checkout-cone-mode: false
           persist-credentials: false
 
       - name: Verify source and prepare the experimental minimum SDK
