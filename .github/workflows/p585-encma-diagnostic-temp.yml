@@ -1,0 +1,49 @@
+---
+name: Read prior ENCMA emulator diagnostic
+on:
+  push:
+    branches:
+      - arena/6ccbd69f-mattermost-mobile
+    paths:
+      - .github/workflows/p585-encma-diagnostic-temp.yml
+permissions:
+  actions: read
+  checks: write
+  contents: read
+jobs:
+  extract-emulator-error:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Publish sanitized emulator failure context
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          gh api --allow-escape-sequences "repos/$GITHUB_REPOSITORY/actions/jobs/125440748609/logs" > "$RUNNER_TEMP/prior-job.log" 2> "$RUNNER_TEMP/prior-error.log" || true
+          python3 - <<'PY'
+          import json, os, pathlib, re
+          temp = pathlib.Path(os.environ['RUNNER_TEMP'])
+          log = temp.joinpath('prior-job.log').read_text(errors='replace')
+          err = temp.joinpath('prior-error.log').read_text(errors='replace')
+          log = re.sub(r'\x1b\[[0-9;]*[A-Za-z]', '', log)
+          marker = log.rfind('Run ReactiveCircus/android-emulator-runner@')
+          scope = log[marker:] if marker >= 0 else log[-40000:]
+          lines = scope.splitlines()
+          bad = [i for i, line in enumerate(lines) if re.search(r'error|failed|exception|unable|cannot|could not', line, re.I)]
+          indexes = set()
+          for i in bad[-8:]:
+              indexes.update(range(max(0, i-3), min(len(lines), i+4)))
+          result = '\n'.join(lines[i] for i in sorted(indexes))[-12000:]
+          if not result:
+              result = 'No recognizable error; log retrieval: ' + err[-1000:]
+          result = re.sub(r'https?://\S+', '[URL removed]', result)
+          payload = {
+              'name': 'p585-encma-prior-emulator-check',
+              'head_sha': os.environ['GITHUB_SHA'],
+              'status': 'completed',
+              'conclusion': 'neutral',
+              'output': {'title': 'Prior experimental emulator failure', 'summary': 'Sanitized failure context.', 'text': result},
+          }
+          temp.joinpath('prior-check.json').write_text(json.dumps(payload))
+          PY
+          gh api "repos/$GITHUB_REPOSITORY/check-runs" --method POST --input "$RUNNER_TEMP/prior-check.json" >/dev/null
