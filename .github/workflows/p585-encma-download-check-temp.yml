@@ -1,0 +1,76 @@
+name: Validate public ENCMA ARM download
+
+on:
+  push:
+    branches:
+      - arena/6ccbd69f-mattermost-mobile
+    paths:
+      - .github/workflows/p585-encma-download-check-temp.yml
+
+permissions:
+  contents: read
+  checks: write
+
+jobs:
+  validate-anonymous-artifact:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout installer
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Download anonymously and verify the pinned ZIP, APK, and signer
+        id: artifact-check
+        continue-on-error: true
+        run: |
+          python3 - <<'PY'
+          import glob, importlib.util, os, pathlib, subprocess, tempfile
+          result = pathlib.Path(os.environ['RUNNER_TEMP']) / 'encma-download-result.txt'
+          try:
+              spec = importlib.util.spec_from_file_location('encma_installer', 'scripts/p585-encma-install.py')
+              installer = importlib.util.module_from_spec(spec)
+              spec.loader.exec_module(installer)
+              with tempfile.TemporaryDirectory(prefix='verify-encma-') as tmp:
+                  root = pathlib.Path(tmp)
+                  archive, apk = root / 'artifact.zip', root / 'encma.apk'
+                  installer.download_archive(archive)
+                  installer.extract_verified_apk(archive, apk)
+                  tools = pathlib.Path(os.environ['ANDROID_HOME']) / 'build-tools'
+                  signers = sorted(glob.glob(str(tools / '*' / 'apksigner')))
+                  aapts = sorted(glob.glob(str(tools / '*' / 'aapt')))
+                  assert signers and aapts, 'Android verification tools were not found'
+                  signature = subprocess.run([signers[-1], 'verify', '--verbose', '--print-certs', str(apk)],
+                                             check=True, capture_output=True, text=True).stdout
+                  expected = 'certificate SHA-256 digest: 1431eedaa27b30fd846283f083e52a5fa40c0261e1a039a337a37174d699e750'
+                  assert expected in signature, 'APK signing certificate did not match the expected debug key'
+                  badging = subprocess.run([aapts[-1], 'dump', 'badging', str(apk)],
+                                           check=True, capture_output=True, text=True).stdout
+                  for expected in ("package: name='com.encma.hxmain'", "sdkVersion:'27'", "native-code: 'armeabi-v7a'"):
+                      assert expected in badging, 'APK metadata did not match: ' + expected
+              result.write_text('Anonymous artifact ZIP and APK hashes, exact size, Android 8.1 ARM metadata, and public debug signer all matched. No device was touched.')
+          except Exception as exc:
+              result.write_text('Anonymous verification failed: {}: {}'.format(type(exc).__name__, exc))
+              raise SystemExit(1)
+          PY
+
+      - name: Publish anonymous verification result
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          OUTCOME: ${{ steps.artifact-check.outcome }}
+        run: |
+          test -s "$RUNNER_TEMP/encma-download-result.txt" || echo 'Validation did not produce a result.' > "$RUNNER_TEMP/encma-download-result.txt"
+          if [ "$OUTCOME" = success ]; then conclusion=success; else conclusion=failure; fi
+          gh api --method POST "/repos/$REPO/check-runs" \
+            -f name=p585-encma-anonymous-download-validation -f head_sha="$SHA" \
+            -f status=completed -f conclusion="$conclusion" \
+            -f output\[title\]='ENCMA anonymous artifact validation' \
+            -f output\[summary\]="$(cat "$RUNNER_TEMP/encma-download-result.txt")" > /dev/null
+
+      - name: Enforce verification result
+        if: steps.artifact-check.outcome != 'success'
+        run: exit 1
