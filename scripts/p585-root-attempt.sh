@@ -91,6 +91,31 @@ check_mount() {
     esac
 }
 
+# TWRP may already have mounted SYSTEM read-write. In that case this check
+# reads only; it does not remount or change the filesystem. Magisk itself may
+# modify /system later, after the user explicitly confirms installation.
+check_system_mount() {
+    local mounts
+    mounts=$(adb_text shell "awk '\$2==\"/system\" {print}' /proc/mounts") || fail 'Cannot inspect /system mounts.'
+    if [[ -z "$mounts" ]]; then
+        printf '%s\n' 'Checking /system using a read-only mount without journal replay...'
+        timeout 30 "${ADB[@]}" shell 'mount -t ext4 -o ro,noload /dev/block/bootdevice/by-name/SYSTEM /system' || \
+            fail 'Could not mount /system read-only; this script will not repair or format it.'
+        mounts=$(adb_text shell "awk '\$2==\"/system\" {print}' /proc/mounts") || fail 'Cannot inspect /system mounts.'
+    fi
+    [[ -n "$mounts" ]] || fail '/system is not mounted; no installation was attempted.'
+    [[ "$mounts" != *$'\n'* ]] || fail "Multiple /system mounts found; refusing to guess: $mounts"
+    printf 'Recovery /system mount: %s\n' "$mounts"
+    if check_mount /system /dev/block/mmcblk0p18 ro; then
+        printf '%s\n' '/system is mounted read-only.'
+    elif check_mount /system /dev/block/mmcblk0p18 rw; then
+        printf '%s\n' '/system was already mounted read-write; preflight will only read it.'
+        printf '%s\n' 'The Magisk installer may modify /system only after your confirmation.'
+    else
+        fail "Unexpected /system source, filesystem or mount options: $mounts"
+    fi
+}
+
 # Magisk also reads inherited environment variables, including MAGISKTMP,
 # whose config has priority over /data and /cache. Reject unexpected values.
 check_recovery_environment() {
@@ -263,12 +288,7 @@ main() {
     resolved=$(resolve_block "$path") || fail 'Cannot resolve SYSTEM partition.'
     [[ "$resolved" == '/dev/block/mmcblk0p18' ]] || fail "Unexpected SYSTEM: $resolved"
 
-    if ! timeout 20 "${ADB[@]}" shell 'grep -q " /system " /proc/mounts' >/dev/null 2>&1; then
-        printf '%s\n' 'Checking /system using a read-only mount without journal replay...'
-        timeout 30 "${ADB[@]}" shell 'mount -t ext4 -o ro,noload /dev/block/bootdevice/by-name/SYSTEM /system' || \
-            fail 'Could not mount /system read-only; this script will not repair or format it.'
-    fi
-    check_mount /system /dev/block/mmcblk0p18 ro || fail '/system is not the expected read-only ext4 mount.'
+    check_system_mount
     sys_build=$(adb_text shell "grep '^ro.build.version.incremental=' /system/build.prop | head -n 1") || fail 'Cannot read system build.'
     [[ "$sys_build" == "ro.build.version.incremental=$BUILD" ]] || fail "Unexpected installed system build: $sys_build"
     sys_abi=$(adb_text shell "grep '^ro.product.cpu.abi=' /system/build.prop | head -n 1") || fail 'Cannot read system ABI.'
