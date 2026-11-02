@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="io.appium.settings" android:versionCode="75" android:versionName="5.7.5-manama">
+    <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="27" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_MOCK_LOCATION" />
+    <application android:label="Manama mock location" android:allowBackup="false" android:debuggable="false">
+        <service android:name="io.appium.settings.LocationService" android:exported="true"
+            android:permission="android.permission.DUMP" />
+        <activity android:name="com.google.android.gms.common.api.GoogleApiActivity"
+            android:exported="false" android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+        <meta-data android:name="com.google.android.gms.version" android:value="12451000" />
+    </application>
+</manifest>
