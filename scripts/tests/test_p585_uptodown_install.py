@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from email.message import Message
 from unittest import mock
 from urllib import parse, request
 
@@ -44,12 +45,15 @@ class UrlAndTrustTests(unittest.TestCase):
                     'file:///etc/passwd', 'https://uptodown.com:abc/x'):
             self.assertFalse(apps.allowed_uptodown(url), url)
 
-    def test_authenticated_redirect_is_never_followed(self):
+    def test_untrusted_api_and_cdn_redirects_are_not_followed(self):
         req = request.Request('https://www.uptodown.app/eapi/a',
                               headers={'Authorization': 'Bearer secret'})
         handler = apps.RestrictedRedirect(True)
-        for url in ('https://www.uptodown.app/eapi/b', 'https://evil.test/'):
-            with self.assertRaisesRegex(apps.Stop, 'redirect'):
+        for url in ('https://www.uptodown.app/eapi/b', 'https://evil.test/',
+                    'https://www.uptodown.app.evil.test/eapi/a/',
+                    'http://www.uptodown.app/eapi/a/',
+                    'https://user@www.uptodown.app/eapi/a/'):
+            with self.subTest(url=url), self.assertRaisesRegex(apps.Stop, 'redirect'):
                 handler.redirect_request(req, None, 302, 'Found', {}, url)
         with self.assertRaisesRegex(apps.Stop, 'redirect'):
             apps.RestrictedRedirect(False).redirect_request(req, None, 302, 'Found', {},
@@ -57,6 +61,70 @@ class UrlAndTrustTests(unittest.TestCase):
         self.assertIsNotNone(apps.RestrictedRedirect(False).redirect_request(
             request.Request('https://dw.uptodown.com/x'), None, 302, 'Found', {},
             'https://dw2.uptodown.com/y'))
+        for header in ('Authorization', 'Cookie', 'Proxy-Authorization'):
+            req = request.Request('https://dw.uptodown.com/x', headers={header: 'secret'})
+            with self.subTest(header=header), self.assertRaisesRegex(apps.Stop, 'credentials'):
+                apps.RestrictedRedirect(False).redirect_request(req, None, 302, 'Found', {},
+                                                                'https://dw2.uptodown.com/y')
+
+    def test_api_canonical_redirect_preserves_only_safe_same_origin_request(self):
+        handler = apps.RestrictedRedirect(True)
+        req = request.Request('https://www.uptodown.app/eapi/auth/token?identifier=private',
+                              data=b'identifier=fixture', method='POST',
+                              headers={'Authorization': 'Bearer fixture', 'Cookie': 'secret',
+                                       'Proxy-Authorization': 'proxy-secret'})
+        for status in (301, 302, 307, 308):
+            with self.subTest(status=status):
+                redirected = handler.redirect_request(
+                    req, None, status, 'Found', {},
+                    'https://www.uptodown.app/eapi/auth/token/?identifier=private')
+                self.assertEqual(redirected.get_method(), 'POST')
+                self.assertEqual(redirected.data, b'identifier=fixture')
+                headers = {k.lower(): v for k, v in redirected.header_items()}
+                self.assertEqual(headers['authorization'], 'Bearer fixture')
+                self.assertNotIn('cookie', headers)
+                self.assertNotIn('proxy-authorization', headers)
+        with self.assertRaises(apps.Stop):
+            handler.redirect_request(req, None, 303, 'See other', {},
+                                     'https://www.uptodown.app/eapi/auth/token/')
+
+    def test_redirect_diagnostics_do_not_disclose_url_paths_tokens_or_ip(self):
+        req = request.Request('https://www.uptodown.app/eapi/auth/token?identifier=private-id')
+        redirect = 'https://user:password@evil.example/path-secret?bearer=secret#fragment'
+        with self.assertRaises(apps.Stop) as caught:
+            apps.RestrictedRedirect(True).redirect_request(req, None, 302, 'Found', {}, redirect)
+        text = str(caught.exception)
+        self.assertIn('authentication', text)
+        self.assertIn('evil.example', text)
+        for secret in ('private-id', 'user', 'password', 'path-secret', 'bearer=secret', 'fragment'):
+            self.assertNotIn(secret, text)
+        self.assertEqual(apps.safe_origin('https://192.168.1.23/x?token=secret'), 'https://(IP hidden)')
+        self.assertEqual(apps.safe_origin('https://[::1]/x'), 'https://(IP hidden)')
+
+    def test_real_urllib_opener_follows_same_api_path_without_changing_post(self):
+        from urllib.response import addinfourl
+        seen = []
+        class FakeHTTPS(request.HTTPSHandler):
+            def https_open(self, req):
+                seen.append((req.get_method(), req.data, dict(req.header_items()), req.full_url))
+                headers = Message()
+                if len(seen) == 1:
+                    headers['Location'] = '/eapi/auth/token/?identifier=fixture'
+                    response = addinfourl(io.BytesIO(b''), headers, req.full_url, 308)
+                    response.msg = 'Permanent redirect'
+                    return response
+                response = addinfourl(io.BytesIO(b'{"token":"a.b.c"}'), headers, req.full_url, 200)
+                response.msg = 'OK'
+                return response
+        opener = request.build_opener(apps.RestrictedRedirect(True), FakeHTTPS())
+        req = request.Request('https://www.uptodown.app/eapi/auth/token?identifier=fixture',
+                              data=b'example=one', headers={'Authorization': 'Bearer fixture'}, method='POST')
+        with opener.open(req, timeout=1) as response:
+            self.assertEqual(response.read(), b'{"token":"a.b.c"}')
+        self.assertEqual(len(seen), 2)
+        self.assertEqual([s[0] for s in seen], ['POST', 'POST'])
+        self.assertEqual(seen[1][1], b'example=one')
+        self.assertEqual({k.lower(): v for k, v in seen[1][2].items()}['authorization'], 'Bearer fixture')
 
     def test_authentication_posts_anonymous_hmac_and_uses_returned_bearer(self):
         calls = []

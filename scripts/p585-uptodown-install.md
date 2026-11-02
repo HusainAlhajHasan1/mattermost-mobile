@@ -28,6 +28,8 @@ P585_SERIAL=5203c66b523ca357 python3 scripts/p585-uptodown-install.py
   latest ARM64-only APK, use XAPKs/splits, or silently use a different mirror.
   The catalog search and downloader are bounded; if the exact file is absent,
   ambiguous, inaccessible, or the service changes, Instagram is not installed.
+  It prints Uptodown's public Instagram catalogue ID to help diagnose a failed
+  version lookup; this is not a tablet or account identifier.
 - If F-Droid is missing, attempts its official APK from `f-droid.org`. It
   validates a pinned F-Droid public key and detached signature with `gpgv`.
 - Reports each package separately. An exit code of 1 indicates an incomplete
@@ -73,8 +75,12 @@ install it without a separately established fingerprint.
 - Uptodown anonymous download-URL resolution uses the public client protocol
   documented in [Obtainium's Uptodown source](https://github.com/ImranR98/Obtainium/blob/main/lib/app_sources/uptodown.dart).
   This is an undocumented service and may require a newer protocol, a browser
-  challenge, or be blocked. The script does not request a personal account,
-  store a bearer token on disk, or send it to a redirect/CDN.
+  challenge, or be blocked. The script does not request a personal account or
+  store a bearer token on disk. It follows API redirects only when HTTPS stays
+  on the exact same API origin and endpoint (ignoring a trailing slash),
+  preserving the request method. A bearer token is never sent to a different
+  origin or CDN. Other unexpected redirects stop safely; the error prints only
+  their stage and origin (not paths, query strings, userinfo or literal IPs).
 
 The script and unit tests were developed without access to the tablet and
 without fetching the real APK binaries or testing the live Uptodown API.

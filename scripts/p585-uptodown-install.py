@@ -8,6 +8,7 @@ See p585-uptodown-install.md for the provenance and important limitations.
 import hashlib
 import hmac
 import http.client
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -110,16 +111,70 @@ def allowed_uptodown(url):
         return False
 
 
+def safe_origin(url):
+    """Report only an origin, never URL paths, query strings, userinfo or IPs."""
+    try:
+        parts = parse.urlsplit(url)
+        scheme = parts.scheme.lower() if parts.scheme.lower() in ('http', 'https') else '(other)'
+        host = parts.hostname or ''
+        try:
+            ipaddress.ip_address(host)
+        except ValueError:
+            if not re.fullmatch(r'[a-zA-Z0-9.-]{1,253}', host):
+                host = '(hidden)'
+        else:
+            host = '(IP hidden)'
+        # Do not let control characters or a user-supplied port appear in logs.
+        return scheme + '://' + host
+    except ValueError:
+        return '(invalid origin)'
+
+
+def same_api_endpoint(old, new):
+    """Allow only HTTPS canonicalization of the same path on the API host."""
+    try:
+        source, target = parse.urlsplit(old), parse.urlsplit(new)
+        return (source.scheme == target.scheme == 'https'
+                and source.hostname == target.hostname == API_HOST
+                and source.port in (None, 443) and target.port in (None, 443)
+                and source.username is None and source.password is None
+                and target.username is None and target.password is None
+                and not target.fragment and bool(source.path)
+                and source.path.rstrip('/') == target.path.rstrip('/'))
+    except ValueError:
+        return False
+
+
 class RestrictedRedirect(request.HTTPRedirectHandler):
     def __init__(self, with_auth):
         self.with_auth = with_auth
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
-        # Never send an anonymous bearer token to another URL, even on the
-        # same host. Binary downloads have no bearer token.
-        if self.with_auth or not allowed_uptodown(newurl):
-            raise Stop('Uptodown returned an unsafe or unexpected redirect.')
-        return super().redirect_request(req, fp, code, msg, headers, newurl)
+        if self.with_auth and code in (301, 302, 307, 308) and same_api_endpoint(req.full_url, newurl):
+            # Preserve POST and its anonymous HMAC, or GET and its bearer, only
+            # for the exact same HTTPS API origin and same endpoint. Standard
+            # urllib redirects can silently turn a POST into a GET.
+            if req.get_method() not in ('GET', 'POST'):
+                raise Stop('Unexpected API redirect method; no redirect followed.')
+            forwarded = {k: v for k, v in req.header_items()
+                         if k.lower() not in ('proxy-authorization', 'cookie')}
+            return request.Request(newurl, data=req.data, headers=forwarded,
+                                   origin_req_host=req.origin_req_host, unverifiable=True,
+                                   method=req.get_method())
+        if not self.with_auth and allowed_uptodown(newurl):
+            # No bearer, proxy credentials, or cookies may be forwarded from a
+            # webpage or CDN request, even to a permitted Uptodown hostname.
+            if any(k.lower() in ('authorization', 'proxy-authorization', 'cookie')
+                   for k, _value in req.header_items()):
+                raise Stop('Unexpected credentials in an Uptodown file redirect; not followed.')
+            return super().redirect_request(req, fp, code, msg, headers, newurl)
+        path = parse.urlsplit(req.full_url).path
+        stage = ('authentication' if self.with_auth and path.rstrip('/') == '/eapi/auth/token' else
+                 'file URL lookup' if self.with_auth else 'web/file download')
+        same_path = 'yes' if same_api_endpoint(req.full_url, newurl) else 'no'
+        raise Stop(f'Installer blocked an Uptodown redirect at {stage} (HTTP {code}, '
+                   f'{safe_origin(req.full_url)} -> {safe_origin(newurl)}, '
+                   f'same API endpoint: {same_path}). No redirect was followed.')
 
 
 def open_uptodown(url, headers=None, body=None, auth=False):
@@ -464,6 +519,7 @@ def main():
                 elif package == INSTAGRAM:
                     say('Looking for the pinned Android 8 / 32-bit Instagram APK on Uptodown...')
                     app_id = instagram_app_id()
+                    say('  Public Instagram catalogue ID: ' + app_id)
                     file_id = instagram_version_file(app_id)
                     apk = work / (INSTAGRAM + '.apk')
                     client.download_apk(app_id, file_id, IG_SHA256, apk, 125 * 1024 * 1024)
