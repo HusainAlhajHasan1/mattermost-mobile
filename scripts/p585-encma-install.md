@@ -52,10 +52,11 @@ accepted that risk before receiving this version of the command. Do not provide
 or publish private keys, passwords, or VPN configuration in chat.
 
 Downloads use the **computer's network**, not necessarily the tablet's VPN.
-The pinned ARM artifact expires on **2026-12-02 at 19:10 UTC** and may also be
-removed by the repository owner. No GitHub login is required for the public
-artifact endpoint as long as GitHub permits anonymous access and the host can
-reach its CDN.
+The pinned ZIP is also available as an [experimental public release asset](https://github.com/HusainAlhajHasan1/mattermost-mobile/releases/download/encma-android81-armv7-experimental-41503802436/encma-experimental-android81-armeabi-v7a.zip).
+Its ZIP and APK hashes match the Actions build. The original Actions artifact
+expires on **2026-12-02 at 19:10 UTC**; the separate release asset remains until
+removed by the repository owner. The release asset was verified anonymously,
+without a GitHub login.
 
 ## Testing boundary
 

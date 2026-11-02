@@ -174,6 +174,16 @@ class InstallerTests(unittest.TestCase):
         self.assertIn('appeared during setup', output)
         self.assert_no_install(state)
 
+    def test_download_uses_the_public_release_with_bounded_https_redirects(self):
+        output = self.root / 'download.zip'
+        def fake_run(args, **kwargs):
+            self.assertEqual(args[-1], app.RELEASE_URL)
+            self.assertIn('--max-redirs', args)
+            self.assertIn('--proto-redir', args)
+            output.write_bytes(self.archive.read_bytes())
+        with mock.patch.object(app, 'run', side_effect=fake_run):
+            app.download_archive(output)
+
     def test_curl_errors_do_not_disclose_signed_urls(self):
         failure = app.subprocess.CompletedProcess(['curl'], 22, b'', b'failed https://cdn.example/a?secret=token')
         with mock.patch.object(app.subprocess, 'run', return_value=failure):

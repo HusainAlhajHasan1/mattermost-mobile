@@ -1,4 +1,4 @@
-name: Publish and verify experimental ENCMA download
+name: Validate public ENCMA ARM download
 
 on:
   push:
@@ -8,77 +8,69 @@ on:
       - .github/workflows/p585-encma-download-check-temp.yml
 
 permissions:
-  actions: read
-  contents: write
+  contents: read
   checks: write
 
 jobs:
-  public-download:
+  validate-anonymous-artifact:
     runs-on: ubuntu-22.04
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
-      - name: Publish and verify the experimental public artifact
-        id: release-check
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          BUILD_SHA: cc2039288fa8cd5cbe103939a42283158ee28711
-          TAG: encma-android81-armv7-experimental-41503802436
-          ASSET: encma-experimental-android81-armeabi-v7a.zip
-          ZIP_SHA: 76e1198f4e64961e1f8437548e576a547ae29c90d1b3e9e18008c659066fd99a
-        run: |
-          set -euo pipefail
-          stage='download Actions artifact'
-          trap 'printf "Public release verification failed at stage: %s.\n" "$stage" > "$RUNNER_TEMP/release-result.txt"' ERR
-          cd "$RUNNER_TEMP"
-          gh api "/repos/$REPO/actions/artifacts/13170879612/zip" > "$ASSET"
-          printf '%s  %s\n' "$ZIP_SHA" "$ASSET" | sha256sum -c -
-          stage='create experimental pre-release'
-          if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
-            echo 'A release with this tag already exists; refusing to overwrite it.'
-          else
-            gh release create "$TAG" "$ASSET" --repo "$REPO" --target "$BUILD_SHA" --prerelease \
-              --title 'Experimental ENCMA for Android 8.1 ARMv7' \
-              --notes 'Experimental build from source 4a9471207b14d41f5ffec2bf6b547061e8df7949, with API-27 compatibility changes. The Android 8.1 x86 emulator smoke test passed; ARM tablet, VPN, and login are untested. Signed with the public debug key: do not use for sensitive data. See scripts/p585-encma/README.md.'
-          fi
-          stage='download public release asset without authentication'
-          url="https://github.com/$REPO/releases/download/$TAG/$ASSET"
-          env -u GH_TOKEN -u GITHUB_TOKEN curl -q --fail --silent --show-error --location \
-            --proto '=https' --proto-redir '=https' --max-redirs 5 --connect-timeout 20 \
-            --max-time 240 --output anonymous.zip "$url" 2> anonymous-curl-error.txt
-          printf '%s  %s\n' "$ZIP_SHA" anonymous.zip | sha256sum -c -
-          stage='verify release APK bytes'
-          python3 - <<'PY'
-          import hashlib, zipfile
-          with zipfile.ZipFile('anonymous.zip') as archive:
-              infos = archive.infolist()
-              assert len(infos) == 1 and infos[0].filename == 'app-armeabi-v7a-release.apk'
-              assert infos[0].file_size == 81931868
-              h = hashlib.sha256()
-              with archive.open(infos[0]) as apk:
-                  for chunk in iter(lambda: apk.read(1024 * 1024), b''):
-                      h.update(chunk)
-              assert h.hexdigest() == '2aa1cf50e340ca430a8680317bb96151066b1aa47106db35ae5ff585756700bd'
-          PY
-          printf '%s\n' 'Anonymous public release download, archive SHA-256, APK SHA-256 and APK size verified. No device was touched.' > "$RUNNER_TEMP/release-result.txt"
+      - name: Checkout installer
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
 
-      - name: Publish verification result
+      - name: Download anonymously and verify the pinned ZIP, APK, and signer
+        id: artifact-check
+        continue-on-error: true
+        run: |
+          python3 - <<'PY'
+          import glob, importlib.util, os, pathlib, subprocess, tempfile
+          result = pathlib.Path(os.environ['RUNNER_TEMP']) / 'encma-download-result.txt'
+          try:
+              spec = importlib.util.spec_from_file_location('encma_installer', 'scripts/p585-encma-install.py')
+              installer = importlib.util.module_from_spec(spec)
+              spec.loader.exec_module(installer)
+              with tempfile.TemporaryDirectory(prefix='verify-encma-') as tmp:
+                  root = pathlib.Path(tmp)
+                  archive, apk = root / 'artifact.zip', root / 'encma.apk'
+                  installer.download_archive(archive)
+                  installer.extract_verified_apk(archive, apk)
+                  tools = pathlib.Path(os.environ['ANDROID_HOME']) / 'build-tools'
+                  signers = sorted(glob.glob(str(tools / '*' / 'apksigner')))
+                  aapts = sorted(glob.glob(str(tools / '*' / 'aapt')))
+                  assert signers and aapts, 'Android verification tools were not found'
+                  signature = subprocess.run([signers[-1], 'verify', '--verbose', '--print-certs', str(apk)],
+                                             check=True, capture_output=True, text=True).stdout
+                  expected = 'certificate SHA-256 digest: 1431eedaa27b30fd846283f083e52a5fa40c0261e1a039a337a37174d699e750'
+                  assert expected in signature, 'APK signing certificate did not match the expected debug key'
+                  badging = subprocess.run([aapts[-1], 'dump', 'badging', str(apk)],
+                                           check=True, capture_output=True, text=True).stdout
+                  for expected in ("package: name='com.encma.hxmain'", "sdkVersion:'27'", "native-code: 'armeabi-v7a'"):
+                      assert expected in badging, 'APK metadata did not match: ' + expected
+              result.write_text('Anonymous artifact ZIP and APK hashes, exact size, Android 8.1 ARM metadata, and public debug signer all matched. No device was touched.')
+          except Exception as exc:
+              result.write_text('Anonymous verification failed: {}: {}'.format(type(exc).__name__, exc))
+              raise SystemExit(1)
+          PY
+
+      - name: Publish anonymous verification result
         if: always()
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           SHA: ${{ github.sha }}
-          OUTCOME: ${{ steps.release-check.outcome }}
+          OUTCOME: ${{ steps.artifact-check.outcome }}
         run: |
-          test -s "$RUNNER_TEMP/release-result.txt" || echo 'Validation did not produce a result.' > "$RUNNER_TEMP/release-result.txt"
+          test -s "$RUNNER_TEMP/encma-download-result.txt" || echo 'Validation did not produce a result.' > "$RUNNER_TEMP/encma-download-result.txt"
           if [ "$OUTCOME" = success ]; then conclusion=success; else conclusion=failure; fi
           gh api --method POST "/repos/$REPO/check-runs" \
-            -f name=p585-encma-public-release-validation -f head_sha="$SHA" \
+            -f name=p585-encma-anonymous-download-validation -f head_sha="$SHA" \
             -f status=completed -f conclusion="$conclusion" \
-            -f output\[title\]='ENCMA public artifact validation' \
-            -f output\[summary\]="$(cat "$RUNNER_TEMP/release-result.txt")" > /dev/null
+            -f output\[title\]='ENCMA anonymous artifact validation' \
+            -f output\[summary\]="$(cat "$RUNNER_TEMP/encma-download-result.txt")" > /dev/null
 
       - name: Enforce verification result
-        if: steps.release-check.outcome != 'success'
+        if: steps.artifact-check.outcome != 'success'
         run: exit 1

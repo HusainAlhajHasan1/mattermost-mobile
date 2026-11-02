@@ -22,7 +22,10 @@ import zipfile
 SERIAL_HASH = '072734241f69cfc548d138f9a496f532972e476926cb69e054ebda981851728d'
 PACKAGE = 'com.encma.hxmain'
 ACTIVITY = 'com.encma.hxmain/com.mattermost.rnbeta.MainActivity'
-ARTIFACT_ID = 13170879612
+ARTIFACT_ID = 13170879612  # Source Actions artifact; the public release holds the same ZIP.
+RELEASE_URL = ('https://github.com/HusainAlhajHasan1/mattermost-mobile/releases/download/'
+               'encma-android81-armv7-experimental-41503802436/'
+               'encma-experimental-android81-armeabi-v7a.zip')
 ARCHIVE_SHA256 = '76e1198f4e64961e1f8437548e576a547ae29c90d1b3e9e18008c659066fd99a'
 APK_SHA256 = '2aa1cf50e340ca430a8680317bb96151066b1aa47106db35ae5ff585756700bd'
 APK_SIZE = 81931868
@@ -83,10 +86,9 @@ def check_pins():
 
 def download_archive(path):
     check_pins()
-    url = 'https://api.github.com/repos/HusainAlhajHasan1/mattermost-mobile/actions/artifacts/{}/zip'.format(ARTIFACT_ID)
     args = ['curl', '-q', '--fail', '--silent', '--show-error', '--location', '--proto', '=https',
             '--proto-redir', '=https', '--max-redirs', '5', '--retry', '2', '--connect-timeout', '20',
-            '--max-time', '600', '--max-filesize', str(MAX_ARCHIVE), '--output', str(path), url]
+            '--max-time', '600', '--max-filesize', str(MAX_ARCHIVE), '--output', str(path), RELEASE_URL]
     run(args, timeout=630, file_limit=MAX_ARCHIVE)
     if not path.is_file() or not 0 < path.stat().st_size <= MAX_ARCHIVE:
         raise Stop('GitHub artifact is empty or unexpectedly large; nothing installed.')
