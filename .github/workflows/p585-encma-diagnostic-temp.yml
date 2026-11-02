@@ -19,7 +19,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -uo pipefail
-          gh api "repos/$GITHUB_REPOSITORY/actions/jobs/125427333849/logs" > "$RUNNER_TEMP/prior-job.log" 2> "$RUNNER_TEMP/prior-error.log" || true
+          gh api --allow-escape-sequences "repos/$GITHUB_REPOSITORY/actions/jobs/125427333849/logs" > "$RUNNER_TEMP/prior-job.log" 2> "$RUNNER_TEMP/prior-error.log" || true
           python3 - <<'PY'
           import json, os, pathlib, re
           temp = pathlib.Path(os.environ['RUNNER_TEMP'])
