@@ -22,14 +22,16 @@ P585_SERIAL=5203c66b523ca357 python3 scripts/p585-uptodown-install.py
   Packages retained after an uninstall are not reinstalled automatically.
 - Attempts the Uptodown App Store 7.42 APK from Uptodown, comparing downloaded
   bytes to the pinned SHA-256 below before `adb install`.
-- If Instagram is absent, looks on Uptodown for **one exact older Instagram
-  APK**. It will install only if the downloaded bytes match the independently
-  published fingerprint below. It does not guess an architecture, install the
-  latest ARM64-only APK, use XAPKs/splits, or silently use a different mirror.
-  The catalog search and downloader are bounded; if the exact file is absent,
-  ambiguous, inaccessible, or the service changes, Instagram is not installed.
-  It prints Uptodown's public Instagram catalogue ID to help diagnose a failed
-  version lookup; this is not a tablet or account identifier.
+- If Instagram is absent, attempts Uptodown's Instagram 423.0.0.47.66 APK,
+  whose published SHA-256 also appears on APKMirror's standalone Android 8+,
+  `armeabi-v7a` listing. **The actual downloaded file must match that independent
+  SHA-256 and exact byte count**; matching a version or an APK label is not
+  enough. If it cannot be downloaded or verified, the script searches for a
+  separately SHA-256-pinned older build. It does not install an unverified
+  alternative, use XAPKs/splits, or silently use a different distributor.
+  The search and downloads are bounded. It prints Uptodown's public Instagram
+  catalogue ID if it searches for the fallback; that is not a tablet or account
+  identifier.
 - If F-Droid is missing, attempts its official APK from `f-droid.org`. It
   validates a pinned F-Droid public key and detached signature with `gpgv`.
 - Reports each package separately. An exit code of 1 indicates an incomplete
@@ -37,13 +39,13 @@ P585_SERIAL=5203c66b523ca357 python3 scripts/p585-uptodown-install.py
   authenticity or version was checked. Newly installed packages must return
   `Success` and appear in the owner package list.
 
-The Instagram build is from **April 2025**, so it may lack security updates or
-be refused by Instagram's servers. APKMirror lists its minimum OS and ABI as
-compatible; that is **not** proof that it will run on this Samsung device or
-log in successfully. Instagram can require an Instagram account even though a
-Google account is not required for these installation attempts. A newer
-compatible APK may exist; this installer does not assume one is authentic or
-install it without a separately established fingerprint.
+The primary Instagram build is from **April 2026**; the fallback is from April
+2025. Either may lack security updates or be refused by Instagram's servers.
+APKMirror lists their minimum OS and ABI as compatible; that is **not** proof
+that either will run on this Samsung device or log in successfully. Instagram
+can require an Instagram account even though a Google account is not required
+for these installation attempts. A newer compatible APK may exist; the script
+will not install a different build without a separately established fingerprint.
 
 ## Source and verification details
 
@@ -54,16 +56,23 @@ install it without a separately established fingerprint.
   `d903bec98d76854baa279c81b97048273a7ffd506e2d421308efbb6e7bf66b76`.
   The SHA-256 comes from the distributor's page; it is not an independently
   verified Uptodown signing certificate.
-- Instagram: package `com.instagram.android`, version 378.0.0.52.68, Android
-  version code 378213503, standalone APK, `armeabi-v7a`, nodpi, Android 8+.
-  [APKMirror's listing](https://www.apkmirror.com/apk/instagram/instagram-instagram/instagram-378-0-0-52-68-release/instagram-378-0-0-52-68-19-android-apk-download/)
+- Primary Instagram: package `com.instagram.android`, version 423.0.0.47.66,
+  Android version code 382907140, `armeabi-v7a`, nodpi, Android 8+, standalone
+  APK, 151,054,280 bytes. [APKMirror's listing](https://www.apkmirror.com/apk/instagram/instagram-instagram/instagram-423-0-0-47-66-release/instagram-423-0-0-47-66-11-android-apk-download/)
+  and [Uptodown's file page](https://instagram.en.uptodown.com/android/download/1159277535-x)
+  publish the same APK SHA-256:
+  `b90540132045c4ae2398102ba31e2bb2f404b269cdfb1ed8f17c7cc0e59f74c9`.
+  APKMirror provides an independent fingerprint; the actual file is downloaded
+  only from Uptodown app ID 18904, file ID 1159277535, and checked before ADB
+  installation. The script does **not** independently inspect the APK's signing
+  certificate; Android checks the APK signature as part of installation.
+- Fallback Instagram: version 378.0.0.52.68, Android version code 378213503,
+  standalone `armeabi-v7a`, nodpi, Android 8+. [APKMirror's listing](https://www.apkmirror.com/apk/instagram/instagram-instagram/instagram-378-0-0-52-68-release/instagram-378-0-0-52-68-19-android-apk-download/)
   publishes APK SHA-256
-  `47e70d9ed13da9228277f8f8b7cb564b845074a71fd0afb118650a52cedacdbe`
-  and an Instagram signing-certificate fingerprint. APKMirror provides the
-  independent fingerprint only; the script downloads solely from Uptodown.
-  Uptodown's availability of these *exact* bytes is not established. Other
-  APK-labelled 378.0.0.52.68 variants observed in its catalogue have different
-  hashes, so the script does not substitute them for the pinned build.
+  `47e70d9ed13da9228277f8f8b7cb564b845074a71fd0afb118650a52cedacdbe`.
+  Uptodown's availability of these *exact* fallback bytes is not established.
+  Other APK-labelled 378.0.0.52.68 variants observed in its catalogue have
+  different hashes, so the script does not substitute them for the pin.
 - F-Droid: official
   [`org.fdroid.fdroid_1023052.apk`](https://f-droid.org/repo/org.fdroid.fdroid_1023052.apk)
   and its detached signature embedded in the script. The pinned signing-key
@@ -89,11 +98,11 @@ install it without a separately established fingerprint.
   stop safely; the error prints only their stage and origin (not paths, query
   strings, userinfo or literal IPs).
 
-The script and unit tests were developed without access to the tablet and
-without fetching the real APK binaries or testing the live Uptodown API.
-Synthetic tests do not prove that the store, Instagram, or the tablet will
-work. An Android package manager success confirms installation, not a
-successful first launch or login.
+The user reported that the earlier version installed and confirmed Uptodown on
+the tablet. The Instagram 423 APK and the new code path have **not** yet been
+tried on that device or downloaded in the development environment. Synthetic
+tests do not prove that Instagram will install or run. An Android package
+manager success confirms installation, not a successful first launch or login.
 
 ## Privacy and safety
 

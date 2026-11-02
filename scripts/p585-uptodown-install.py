@@ -28,7 +28,13 @@ FDROID, STORE, INSTAGRAM = 'org.fdroid.fdroid', 'com.uptodown', 'com.instagram.a
 STORE_APP_ID = '18098'
 STORE_FILE_ID = '1232507681'  # Uptodown 7.42
 STORE_SHA256 = 'd903bec98d76854baa279c81b97048273a7ffd506e2d421308efbb6e7bf66b76'
-IG_VERSION = '378.0.0.52.68'  # code 378213503; single APK, Android 8+, arm-v7a, nodpi
+IG_APP_ID = '18904'
+# APKMirror and Uptodown publish the same SHA-256 for this 423 build. Do not
+# assume their labels prove the same bytes: verify the actual download.
+IG_CANDIDATE_FILE_ID = '1159277535'
+IG_CANDIDATE_SHA256 = 'b90540132045c4ae2398102ba31e2bb2f404b269cdfb1ed8f17c7cc0e59f74c9'
+IG_CANDIDATE_SIZE = 151054280  # APKMirror, build 382907140
+IG_VERSION = '378.0.0.52.68'  # fallback code 378213503; single APK, Android 8+, arm-v7a
 IG_SHA256 = '47e70d9ed13da9228277f8f8b7cb564b845074a71fd0afb118650a52cedacdbe'
 IG_BASE = 'https://instagram.en.uptodown.com/android'
 KEY_URL = ('https://api.github.com/repos/f-droid/fdroidclient/contents/'
@@ -396,6 +402,46 @@ def instagram_version_file(app_id):
     raise Stop('The independently pinned Instagram APK was not found in Uptodown’s checked versions.')
 
 
+def check_instagram_candidate(apk):
+    """Verify the actual file against APKMirror's independent 423 pin."""
+    try:
+        size = apk.stat().st_size
+        digest = file_hash(apk)
+    except OSError as exc:
+        raise Stop('Could not verify the Instagram candidate; not installing it.') from exc
+    if size != IG_CANDIDATE_SIZE or digest != IG_CANDIDATE_SHA256:
+        raise Stop('Instagram candidate does not match the independently pinned APK; not installing it.')
+    say('  Independently published APKMirror SHA-256 and size matched.')
+
+
+def get_instagram(client, work):
+    # This is a candidate, not an assertion that Uptodown and APKMirror have
+    # identical bytes. Never install unless the independently listed file
+    # checks also match after download. No account credentials are used.
+    candidate = work / (INSTAGRAM + '.apk')
+    try:
+        say('Trying the Android 8 / 32-bit Instagram 423 APK candidate from Uptodown...')
+        client.download_apk(IG_APP_ID, IG_CANDIDATE_FILE_ID, IG_CANDIDATE_SHA256,
+                            candidate, 160 * 1024 * 1024)
+        check_instagram_candidate(candidate)
+        return candidate
+    except Stop as exc:
+        say('  Instagram 423 candidate was not used: ' + str(exc))
+    # A separately SHA-256-pinned older build remains a safe fallback. Search
+    # only its exact bytes; do not substitute an APK with a similar label.
+    say('Looking for the independently SHA-256-pinned older Instagram APK on Uptodown...')
+    app_id = instagram_app_id()
+    if app_id != IG_APP_ID:
+        raise Stop('Uptodown’s Instagram catalogue ID changed; not installing Instagram.')
+    say('  Public Instagram catalogue ID: ' + app_id)
+    file_id = instagram_version_file(app_id)
+    fallback_dir = work / 'instagram-378'
+    fallback_dir.mkdir(mode=0o700)
+    apk = fallback_dir / (INSTAGRAM + '.apk')
+    client.download_apk(app_id, file_id, IG_SHA256, apk, 125 * 1024 * 1024)
+    return apk
+
+
 class Device:
     def __init__(self, serial):
         if not re.fullmatch(r'[A-Za-z0-9]+', serial or ''):
@@ -520,12 +566,7 @@ def main():
                     apk = work / (STORE + '.apk')
                     client.download_apk(STORE_APP_ID, STORE_FILE_ID, STORE_SHA256, apk, 25 * 1024 * 1024)
                 elif package == INSTAGRAM:
-                    say('Looking for the pinned Android 8 / 32-bit Instagram APK on Uptodown...')
-                    app_id = instagram_app_id()
-                    say('  Public Instagram catalogue ID: ' + app_id)
-                    file_id = instagram_version_file(app_id)
-                    apk = work / (INSTAGRAM + '.apk')
-                    client.download_apk(app_id, file_id, IG_SHA256, apk, 125 * 1024 * 1024)
+                    apk = get_instagram(client, work)
                 else:
                     say('Downloading F-Droid 1.23.2 from F-Droid...')
                     apk = get_fdroid(work)

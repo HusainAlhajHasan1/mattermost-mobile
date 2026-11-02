@@ -31,6 +31,7 @@ SERIAL = '5203c66b523ca357'
 REAL_DOWNLOAD = apps.Uptodown.download_apk
 REAL_IG_ID = apps.instagram_app_id
 REAL_IG_FILE = apps.instagram_version_file
+REAL_IG_CANDIDATE_CHECK = apps.check_instagram_candidate
 REAL_FDROID = apps.get_fdroid
 
 
@@ -352,6 +353,73 @@ class InstagramLookupTests(unittest.TestCase):
             self.assertLessEqual(calls.call_count, 10)
 
 
+class InstagramCandidateTests(unittest.TestCase):
+    def test_exact_candidate_skips_fallback_and_uses_pinned_id(self):
+        payload = b'fake standalone APK'
+        client = mock.Mock()
+        client.download_apk.side_effect = lambda _app, _file, _hash, dest, _limit: dest.write_bytes(payload)
+        with tempfile.TemporaryDirectory() as temp, \
+             mock.patch.object(apps, 'IG_CANDIDATE_SIZE', len(payload)), \
+             mock.patch.object(apps, 'IG_CANDIDATE_SHA256', hashlib.sha256(payload).hexdigest()), \
+             mock.patch.object(apps, 'instagram_app_id') as id_lookup, \
+             mock.patch.object(apps, 'instagram_version_file') as file_lookup:
+            result = apps.get_instagram(client, Path(temp))
+            self.assertEqual(result.read_bytes(), payload)
+            args = client.download_apk.call_args.args
+            self.assertEqual(args[:3], (apps.IG_APP_ID, apps.IG_CANDIDATE_FILE_ID,
+                                        hashlib.sha256(payload).hexdigest()))
+            self.assertEqual(args[4], 160 * 1024 * 1024)
+            self.assertEqual(client.download_apk.call_count, 1)
+            id_lookup.assert_not_called()
+            file_lookup.assert_not_called()
+
+    def test_exact_independent_sha256_and_size_are_both_required(self):
+        payload = b'fake Instagram APK bytes'
+        with tempfile.TemporaryDirectory() as temp:
+            apk = Path(temp) / 'candidate.apk'
+            apk.write_bytes(payload)
+            with mock.patch.object(apps, 'IG_CANDIDATE_SIZE', len(payload)), \
+                 mock.patch.object(apps, 'IG_CANDIDATE_SHA256', hashlib.sha256(payload).hexdigest()):
+                apps.check_instagram_candidate(apk)
+                with mock.patch.object(apps, 'IG_CANDIDATE_SIZE', len(payload) + 1):
+                    with self.assertRaisesRegex(apps.Stop, 'not installing'):
+                        apps.check_instagram_candidate(apk)
+                apk.write_bytes(b'X' + payload[1:])  # same size, different bytes
+                with self.assertRaisesRegex(apps.Stop, 'not installing'):
+                    apps.check_instagram_candidate(apk)
+            apk.unlink()
+            with self.assertRaisesRegex(apps.Stop, 'not installing'):
+                apps.check_instagram_candidate(apk)
+
+    def test_candidate_failure_falls_back_only_to_separately_pinned_apk(self):
+        calls = []
+        def download(app_id, file_id, expected, path, limit):
+            calls.append((app_id, file_id, expected, limit))
+            path.write_bytes(b'wrong candidate' if file_id == apps.IG_CANDIDATE_FILE_ID else b'old pin')
+        client = mock.Mock()
+        client.download_apk.side_effect = download
+        with tempfile.TemporaryDirectory() as temp, \
+             mock.patch.object(apps, 'instagram_app_id', return_value=apps.IG_APP_ID), \
+             mock.patch.object(apps, 'instagram_version_file', return_value='123'):
+            result = apps.get_instagram(client, Path(temp))
+            self.assertEqual(result.read_bytes(), b'old pin')
+        self.assertEqual(calls[0][:3], (apps.IG_APP_ID, apps.IG_CANDIDATE_FILE_ID,
+                                      apps.IG_CANDIDATE_SHA256))
+        self.assertEqual(calls[1][:3], (apps.IG_APP_ID, '123', apps.IG_SHA256))
+        self.assertLessEqual(calls[0][3], 160 * 1024 * 1024)
+
+    def test_fallback_refuses_changed_catalogue_id(self):
+        client = mock.Mock()
+        client.download_apk.side_effect = apps.Stop('unavailable')
+        with tempfile.TemporaryDirectory() as temp, \
+             mock.patch.object(apps, 'instagram_app_id', return_value='999'), \
+             mock.patch.object(apps, 'instagram_version_file') as lookup:
+            with self.assertRaisesRegex(apps.Stop, 'catalogue ID changed'):
+                apps.get_instagram(client, Path(temp))
+            lookup.assert_not_called()
+            self.assertEqual(client.download_apk.call_count, 1)
+
+
 class DeviceUnitTests(unittest.TestCase):
     def test_wrong_device_and_remote_marker_are_rejected(self):
         for serial in ('', 'wrong', 'bad serial'):
@@ -396,8 +464,9 @@ class HostFlowTests(unittest.TestCase):
         env = {'PATH': str(bin_dir) + os.pathsep + os.environ.get('PATH', ''),
                'FAKE_STATE': str(self.state), 'HOME': str(self.root), 'P585_SERIAL': SERIAL}
         self.patches = [mock.patch.dict(os.environ, env),
-                        mock.patch.object(apps, 'instagram_app_id', return_value='123'),
+                        mock.patch.object(apps, 'instagram_app_id', return_value=apps.IG_APP_ID),
                         mock.patch.object(apps, 'instagram_version_file', return_value='456'),
+                        mock.patch.object(apps, 'check_instagram_candidate'),
                         mock.patch.object(apps.Uptodown, 'download_apk', side_effect=self.fake_download),
                         mock.patch.object(apps, 'get_fdroid', side_effect=self.fake_fdroid)]
         for patch in self.patches:
@@ -461,7 +530,7 @@ class HostFlowTests(unittest.TestCase):
                                   'https://dw.uptodown.com/dwn/' + file_id}}).encode()
             elif path == '/dwn/' + apps.STORE_FILE_ID:
                 data = store
-            elif path == '/dwn/13':
+            elif path in ('/dwn/13', '/dwn/' + apps.IG_CANDIDATE_FILE_ID):
                 data = instagram
             elif path == '/android/versions':
                 data = b'<h1 id="detail-app-name" data-code="123">Instagram</h1>'
@@ -481,10 +550,13 @@ class HostFlowTests(unittest.TestCase):
         with mock.patch.object(apps.Uptodown, 'download_apk', REAL_DOWNLOAD), \
              mock.patch.object(apps, 'instagram_app_id', REAL_IG_ID), \
              mock.patch.object(apps, 'instagram_version_file', REAL_IG_FILE), \
+             mock.patch.object(apps, 'check_instagram_candidate', REAL_IG_CANDIDATE_CHECK), \
              mock.patch.object(apps, 'get_fdroid', REAL_FDROID), \
              mock.patch.object(apps, 'open_uptodown', side_effect=network), \
              mock.patch.object(apps, 'curl_download', side_effect=curl_fixture), \
              mock.patch.object(apps, 'STORE_SHA256', hashlib.sha256(store).hexdigest()), \
+             mock.patch.object(apps, 'IG_CANDIDATE_SHA256', ig_hash), \
+             mock.patch.object(apps, 'IG_CANDIDATE_SIZE', len(instagram)), \
              mock.patch.object(apps, 'IG_SHA256', ig_hash), \
              mock.patch.object(apps, 'KEY_HASH', hashlib.sha256(key).hexdigest()), \
              mock.patch.object(apps, 'FDROID_SIGNATURE', sig), \
@@ -494,6 +566,7 @@ class HostFlowTests(unittest.TestCase):
         self.assertEqual(result, 0, output)
         self.assertEqual(set(state['packages']), {apps.FDROID, apps.STORE, apps.INSTAGRAM, 'com.aurora.store'})
         self.assertIn('Official F-Droid signature verified', output)
+        self.assertIn('Independently published APKMirror SHA-256 and size matched.', output)
         self.assertEqual(output.count('Pinned SHA-256 matched.'), 2)
         self.assertEqual(sum('/eapi/auth/token' in x[0] for x in requests), 2)
         self.assertTrue(all('Authorization' not in headers for url, _auth, headers in requests
@@ -501,13 +574,28 @@ class HostFlowTests(unittest.TestCase):
 
     def test_partial_result_when_instagram_not_available_still_installs_fdroid_and_store(self):
         self.save(packages=['com.aurora.store'])
-        with mock.patch.object(apps, 'instagram_version_file', side_effect=apps.Stop('no pinned version')):
+        with mock.patch.object(apps, 'check_instagram_candidate', side_effect=apps.Stop('bad candidate')), \
+             mock.patch.object(apps, 'instagram_version_file', side_effect=apps.Stop('no pinned version')):
             result, output, state = self.run_main()
         self.assertEqual(result, 1)
         self.assertEqual(set(state['packages']), {apps.FDROID, 'com.aurora.store', apps.STORE})
         self.assertIn('no pinned version', output)
         self.assertIn('Instagram: not confirmed installed', output)
         self.assertIn('F-Droid: installed and confirmed', output)
+
+    def test_mismatched_candidate_and_absent_fallback_never_install_instagram(self):
+        with mock.patch.object(apps, 'check_instagram_candidate', REAL_IG_CANDIDATE_CHECK), \
+             mock.patch.object(apps, 'IG_CANDIDATE_SIZE', len(b'verified-only-in-fixture')), \
+             mock.patch.object(apps, 'IG_CANDIDATE_SHA256', '0' * 64), \
+             mock.patch.object(apps, 'instagram_version_file', side_effect=apps.Stop('fallback unavailable')):
+            result, output, state = self.run_main()
+        self.assertEqual(result, 1)
+        self.assertNotIn(apps.INSTAGRAM, state['packages'])
+        self.assertIn('candidate was not used', output)
+        self.assertIn('fallback unavailable', output)
+        self.assertIn('Instagram: not confirmed installed', output)
+        self.assertIn(apps.FDROID, state['packages'])
+        self.assertIn('com.aurora.store', state['packages'])
 
     def test_existing_and_retained_packages_are_not_touched(self):
         self.save(packages=[apps.FDROID, 'com.aurora.store'], retained=[apps.STORE, apps.INSTAGRAM])
