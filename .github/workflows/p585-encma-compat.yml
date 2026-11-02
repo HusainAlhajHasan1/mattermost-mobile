@@ -98,7 +98,8 @@ jobs:
             grep -F "native-code: '$abi'" "$badging"
             "$signer_bin" verify --verbose --print-certs "$apk"
           done > >(tee "$RUNNER_TEMP/p585-verify.log") 2>&1
-          python3 .p585-tools/scripts/p585-encma/inspect_apks.py "$arm" "$x86" | tee -a "$RUNNER_TEMP/p585-verify.log"
+          python3 .p585-tools/scripts/p585-encma/inspect_apks.py "$arm" "$x86" 2>&1 | tee -a "$RUNNER_TEMP/p585-verify.log"
+          stat -c 'size=%s path=%n' "$arm" "$x86" | tee -a "$RUNNER_TEMP/p585-verify.log"
           sha256sum "$arm" "$x86" | tee -a "$RUNNER_TEMP/p585-verify.log"
 
       - name: Run Android unit tests

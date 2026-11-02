@@ -6,7 +6,8 @@ import struct
 import sys
 import zipfile
 
-REQUIRED_LIBS = frozenset({"libreactnative.so", "libhermes.so", "libwg-go.so"})
+# React Native 0.83 ships Hermes under its 0.82+ name, libhermesvm.so.
+REQUIRED_LIBS = frozenset({"libreactnative.so", "libhermesvm.so", "libwg-go.so"})
 ABIS = {"armeabi-v7a": (1, 40), "x86_64": (2, 62)}
 
 
@@ -23,6 +24,7 @@ def inspect(path, abi):
         if any(len(name.split("/")) != 3 for name in all_native):
             raise ValueError("Unexpected native library path in {}".format(path))
         actual_abis = {name.split("/")[1] for name in all_native}
+        print("{} native entries: {}".format(path, ", ".join(sorted(all_native))), flush=True)
         if actual_abis != {abi}:
             raise ValueError("{} contains unexpected native ABIs: {}".format(path, sorted(actual_abis)))
         libraries = set()

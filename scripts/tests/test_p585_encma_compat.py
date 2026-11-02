@@ -114,6 +114,11 @@ class ApkTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "libwg-go"):
             inspect.inspect(self.arm, "armeabi-v7a")
 
+    def test_missing_rn_083_hermes_vm_fails(self):
+        make_apk(self.arm, "armeabi-v7a", inspect.REQUIRED_LIBS - {"libhermesvm.so"})
+        with self.assertRaisesRegex(ValueError, "libhermesvm"):
+            inspect.inspect(self.arm, "armeabi-v7a")
+
     def test_wrong_elf_class_and_machine_fail(self):
         make_apk(self.arm, "armeabi-v7a", wrong_elf="x86_64")
         with self.assertRaisesRegex(ValueError, "ELF"):
