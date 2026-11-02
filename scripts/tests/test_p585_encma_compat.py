@@ -102,7 +102,7 @@ class ApkTests(unittest.TestCase):
         self.arm = self.dir / "arm.apk"
         self.x86 = self.dir / "x86.apk"
         make_apk(self.arm, "armeabi-v7a")
-        make_apk(self.x86, "x86_64")
+        make_apk(self.x86, "x86")
 
     def test_compatible_synthetic_splits_pass(self):
         with redirect_stdout(io.StringIO()):
@@ -119,13 +119,24 @@ class ApkTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "libhermesvm"):
             inspect.inspect(self.arm, "armeabi-v7a")
 
-    def test_wrong_elf_class_and_machine_fail(self):
-        make_apk(self.arm, "armeabi-v7a", wrong_elf="x86_64")
+    def test_wrong_elf_machine_fails(self):
+        make_apk(self.arm, "armeabi-v7a", wrong_elf="x86")
+        with self.assertRaisesRegex(ValueError, "ELF"):
+            inspect.inspect(self.arm, "armeabi-v7a")
+
+    def test_wrong_elf_class_fails(self):
+        wrong_header = bytearray(elf("armeabi-v7a"))
+        wrong_header[4] = 2
+        with zipfile.ZipFile(self.arm, "w") as apk:
+            apk.writestr("AndroidManifest.xml", b"fixture")
+            apk.writestr("assets/index.android.bundle", b"fixture")
+            for name in inspect.REQUIRED_LIBS:
+                apk.writestr("lib/armeabi-v7a/" + name, wrong_header)
         with self.assertRaisesRegex(ValueError, "ELF"):
             inspect.inspect(self.arm, "armeabi-v7a")
 
     def test_mixed_abi_split_fails(self):
-        make_apk(self.arm, "armeabi-v7a", extra_abi="x86_64")
+        make_apk(self.arm, "armeabi-v7a", extra_abi="x86")
         with self.assertRaisesRegex(ValueError, "unexpected native ABIs"):
             inspect.inspect(self.arm, "armeabi-v7a")
 
@@ -135,7 +146,7 @@ class ApkTests(unittest.TestCase):
             inspect.inspect(self.arm, "armeabi-v7a")
 
     def test_missing_arm_library_fails_parity_check(self):
-        make_apk(self.x86, "x86_64", inspect.REQUIRED_LIBS | {"libneeded.so"})
+        make_apk(self.x86, "x86", inspect.REQUIRED_LIBS | {"libneeded.so"})
         with self.assertRaisesRegex(SystemExit, "missing on ARM"):
             inspect.main(["inspect_apks.py", str(self.arm), str(self.x86)])
 
@@ -160,7 +171,7 @@ case "$*" in
     'get-serialno') echo "${FAKE_SERIAL:-emulator-5554}" ;;
     *'shell getprop ro.kernel.qemu') echo "${FAKE_QEMU:-1}" ;;
     *'shell getprop ro.build.version.sdk') echo "${FAKE_SDK:-27}" ;;
-    *'shell getprop ro.product.cpu.abilist') echo "${FAKE_ABIS:-x86_64,x86}" ;;
+    *'shell getprop ro.product.cpu.abilist') echo "${FAKE_ABIS:-x86,armeabi-v7a}" ;;
     *'shell am start -W '*) echo 'Status: ok' ;;
     *'shell uiautomator dump '*) [[ "${FAKE_SCREEN:-1}" = 1 ]] ;;
     *'exec-out cat '*) echo '<hierarchy><node text="VPN connection"/><node text="WireGuard configuration"/></hierarchy>' ;;

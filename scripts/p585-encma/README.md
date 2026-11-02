@@ -8,18 +8,18 @@ The user's existing SM-P585 installation reported Android 8.1/API 27 and
 
 The workflow `.github/workflows/p585-encma-compat.yml` checks out that exact
 source separately, checks the known `android/build.gradle` digest, changes only
-its `minSdkVersion` from 30 to 27, and builds ARMv7 and x86_64 ABI splits. It
+its `minSdkVersion` from 30 to 27, and builds ARMv7 and x86 ABI splits. It
 does **not** suppress Android library manifest minimum-SDK errors. It verifies
 package ID, app label, min SDK, signatures, native ELF architecture, key React
 Native/Hermes/WireGuard libraries, library-set parity, and APK SHA-256. It then
-runs native tests and starts the x86_64 sibling on a fresh Android 8.1 emulator,
+runs native tests and starts the x86 sibling on a fresh Android 8.1 emulator,
 requiring the WireGuard configuration screen to render before uploading the ARM
 APK. Synthetic tests cover the patch and content checks.
 
 Important boundaries:
 
 - Lowering a declared minimum is not a compatibility fix. Building and running
-  an **x86_64** emulator does not prove the **ARM** APK works on a Samsung
+  an **x86** emulator does not prove the **ARM** APK works on a Samsung
   tablet, nor that calls, notifications, file access, authentication, or any
   server integration work. Native code may behave differently by ABI.
 - No real VPN, server, or credentials are used in the emulator smoke test. The
@@ -31,7 +31,10 @@ Important boundaries:
   its repository's **public debug signing key**, so the build is not suitable as
   a trusted production release. Anyone with that key can sign updates. A
   separately authorized release-signing process is needed for production.
-- The workflow uploads a temporary Actions artifact only after its checks pass.
-  It never installs anything on a physical device. An installation command,
-  if created, must use a pinned artifact digest, preserve any existing package
-  and app data, and not launch the app or change VPN settings automatically.
+- The workflow uploads an intermediate diagnostic-only artifact for three days
+  before the emulator step, to support troubleshooting without another full
+  build. Do **not** install it. The separate ARM artifact is uploaded only if
+  the emulator check passes. The workflow never installs anything on a physical
+  device. An installation command, if created, must use a pinned artifact digest,
+  preserve any existing package and app data, and not launch the app or change
+  VPN settings automatically.

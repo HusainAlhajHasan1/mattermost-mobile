@@ -8,7 +8,7 @@ import zipfile
 
 # React Native 0.83 ships Hermes under its 0.82+ name, libhermesvm.so.
 REQUIRED_LIBS = frozenset({"libreactnative.so", "libhermesvm.so", "libwg-go.so"})
-ABIS = {"armeabi-v7a": (1, 40), "x86_64": (2, 62)}
+ABIS = {"armeabi-v7a": (1, 40), "x86": (1, 3)}
 
 
 def inspect(path, abi):
@@ -44,19 +44,19 @@ def inspect(path, abi):
 
 def main(argv):
     if len(argv) != 3:
-        raise SystemExit("Usage: inspect_apks.py ARM_APK X86_64_APK")
+        raise SystemExit("Usage: inspect_apks.py ARM_APK X86_APK")
     try:
         arm = inspect(pathlib.Path(argv[1]), "armeabi-v7a")
-        x86 = inspect(pathlib.Path(argv[2]), "x86_64")
+        x86 = inspect(pathlib.Path(argv[2]), "x86")
         missing_from_arm = x86 - arm
         if missing_from_arm:
-            raise ValueError("Native libraries present on x86_64 but missing on ARM: {}".format(
+            raise ValueError("Native libraries present on x86 but missing on ARM: {}".format(
                 sorted(missing_from_arm)))
     except (OSError, ValueError, zipfile.BadZipFile) as exc:
         raise SystemExit("APK content verification failed: {}".format(exc))
-    print("ARM and x86_64 ELF headers and required React Native, Hermes, and WireGuard libraries verified.")
+    print("ARM and x86 ELF headers and required React Native, Hermes, and WireGuard libraries verified.")
     print("ARM libraries: {}".format(", ".join(sorted(arm))))
-    print("x86_64 libraries: {}".format(", ".join(sorted(x86))))
+    print("x86 libraries: {}".format(", ".join(sorted(x86))))
     print("Library presence is not proof of runtime compatibility.")
 
 
