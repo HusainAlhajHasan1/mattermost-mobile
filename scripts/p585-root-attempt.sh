@@ -55,11 +55,14 @@ prop() { adb_text shell getprop "$1"; }
 
 # Resolve only real block partitions on the expected internal eMMC.
 resolve_block() {
-    local path=$1 out
+    local path=$1 out kind
     [[ "$path" =~ ^/dev/block/[A-Za-z0-9_./-]+$ ]] || return 1
     out=$(adb_text shell "readlink -f '$path'") || return 1
     [[ "$out" =~ ^/dev/block/mmcblk0p[0-9]+$ ]] || return 1
-    timeout 20 "${ADB[@]}" shell "test -b '$out'" >/dev/null 2>&1 || return 1
+    # Older recovery ADB shells can return success even when the remote test
+    # fails. Require an explicit result emitted by the device instead.
+    kind=$(adb_text shell "if [ -b '$out' ]; then echo P585_BLOCK_OK; else echo P585_NOT_BLOCK; fi") || return 1
+    [[ "$kind" == 'P585_BLOCK_OK' ]] || return 1
     printf '%s\n' "$out"
 }
 
@@ -95,12 +98,16 @@ check_mount() {
 # reads only; it does not remount or change the filesystem. Magisk itself may
 # modify /system later, after the user explicitly confirms installation.
 check_system_mount() {
-    local mounts
+    local mounts mount_result
     mounts=$(adb_text shell "awk '\$2==\"/system\" {print}' /proc/mounts") || fail 'Cannot inspect /system mounts.'
     if [[ -z "$mounts" ]]; then
         printf '%s\n' 'Checking /system using a read-only mount without journal replay...'
-        timeout 30 "${ADB[@]}" shell 'mount -t ext4 -o ro,noload /dev/block/bootdevice/by-name/SYSTEM /system' || \
-            fail 'Could not mount /system read-only; this script will not repair or format it.'
+        mount_result=$(timeout 30 "${ADB[@]}" shell 'if mount -t ext4 -o ro,noload /dev/block/bootdevice/by-name/SYSTEM /system; then echo P585_MOUNT_OK; else echo P585_MOUNT_FAILED; fi' 2>&1 | tr -d '\r') || \
+            fail 'Could not contact recovery to mount /system.'
+        case "$mount_result" in
+            P585_MOUNT_OK|*$'\n'P585_MOUNT_OK) ;;
+            *) fail "Could not mount /system read-only; no installation was attempted: $mount_result" ;;
+        esac
         mounts=$(adb_text shell "awk '\$2==\"/system\" {print}' /proc/mounts") || fail 'Cannot inspect /system mounts.'
     fi
     [[ -n "$mounts" ]] || fail '/system is not mounted; no installation was attempted.'
@@ -142,15 +149,39 @@ check_recovery_environment() {
     [[ "$checked" == 1 ]] || fail 'Cannot inspect the TWRP process environment.'
 }
 
+# Read configs with a device-emitted status marker. Concatenate exactly as
+# Magisk does, including the case where a file has no final newline.
+read_magisk_configs() {
+    local result
+    # The loop and its variables run on the device, not on the host.
+    # shellcheck disable=SC2016
+    result=$(adb_text shell '
+        for f in /data/.magisk /cache/.magisk; do
+            if [ -e "$f" ] || [ -L "$f" ]; then
+                if [ -f "$f" ] && [ -r "$f" ] && cat "$f"; then
+                    :
+                else
+                    printf "\nP585_CONFIG_ERROR:%s\n" "$f"
+                    exit 1
+                fi
+            fi
+        done
+        printf "\nP585_CONFIG_OK\n"') || return 1
+    case "$result" in
+        *$'\n'P585_CONFIG_OK) printf '%s\n' "${result%$'\n'P585_CONFIG_OK}" ;;
+        *$'\n'P585_CONFIG_ERROR:/data/.magisk) printf '%s\n' '/data/.magisk is not readable.' >&2; return 1 ;;
+        *$'\n'P585_CONFIG_ERROR:/cache/.magisk) printf '%s\n' '/cache/.magisk is not readable.' >&2; return 1 ;;
+        *) return 1 ;;
+    esac
+}
+
 # Match Magisk's config priority without sourcing either file as shell code.
 check_flags() {
-    local data cache config key actual line
+    local config key actual line
     check_recovery_environment
     check_mount /data /dev/block/mmcblk0p22 rw || fail '/data is not the expected writable ext4 partition.'
     check_mount /cache /dev/block/mmcblk0p19 rw || fail '/cache is not the expected writable ext4 partition.'
-    data=$(adb_text shell 'if [ -f /data/.magisk ]; then cat /data/.magisk; fi') || fail 'Cannot read /data/.magisk.'
-    cache=$(adb_text shell 'if [ -f /cache/.magisk ]; then cat /cache/.magisk; fi') || fail 'Cannot read /cache/.magisk.'
-    config=$(printf '%s\n%s\n' "$data" "$cache")
+    config=$(read_magisk_configs) || fail 'Cannot safely read Magisk config files.'
     for key in KEEPVERITY KEEPFORCEENCRYPT RECOVERYMODE; do
         actual=$(printf '%s\n' "$config" | awk -F= -v key="$key" '$1==key {sub(/^[^=]*=/, ""); print; exit}')
         [[ "$actual" == 'false' ]] || fail "Unexpected Magisk setting: $key=${actual:-unset}. No flags were changed."
@@ -223,9 +254,9 @@ main() {
         usage >&2; exit 2
     fi
     local command hash version battery locked fstab probe sys_build sys_abi line
-    local i label mountpoint path resolved sectors bytes prefix_hash data_hash expected_init_hash tmp_root
+    local i label mountpoint path resolved sectors bytes prefix_hash data_hash expected_init_hash tmp_root temp_status
     local needed_bytes available_kib
-    local tool rc_test target target_resolved output manager_installed deadline state complete root_output root_rc after_hash
+    local tool rc_test target target_resolved output manager_installed install_output install_rc deadline state complete root_output root_rc after_hash
     local -a labels=(BOOT RECOVERY EFS m9kefs1 m9kefs2 m9kefs3)
     local -a mountpoints=(/boot /recovery /efs /m9kefs1 /m9kefs2 /m9kefs3)
     local -a devs=() sizes=() hashes=()
@@ -351,9 +382,15 @@ main() {
     tmp_root=$(adb_text shell 'readlink -f /tmp') || fail 'Cannot verify recovery temporary storage.'
     [[ "$tmp_root" == /* && "$tmp_root" != '/dev/tmp' && "$tmp_root" != /dev/tmp/* ]] || \
         fail 'Recovery /tmp overlaps Magisk installer temporary storage; no ZIP was staged.'
-    if timeout 20 "${ADB[@]}" shell "test -e '$remote_zip'" >/dev/null 2>&1; then
-        fail 'The chosen temporary ZIP already exists; refusing to overwrite it.'
-    fi
+    # Do not infer the remote test result from adb's exit status: old recovery
+    # shells may return zero for both true and false. Also reject symlinks.
+    temp_status=$(adb_text shell "if [ -e '$remote_zip' ] || [ -L '$remote_zip' ]; then echo P585_PATH_EXISTS; else echo P585_PATH_ABSENT; fi") || \
+        fail 'Cannot check the temporary ZIP path in recovery.'
+    case "$temp_status" in
+        P585_PATH_ABSENT) ;;
+        P585_PATH_EXISTS) fail 'The chosen temporary ZIP already exists; refusing to overwrite it.' ;;
+        *) fail "Cannot determine whether the temporary ZIP path is safe: $temp_status" ;;
+    esac
     printf '\n%s\n' 'Staging the verified Magisk ZIP in recovery temporary storage...'
     timeout 180 "${ADB[@]}" push "$ZIP" "$remote_zip" || fail 'Could not stage the ZIP; no install was started.'
     data_hash=$(timeout 180 "${ADB[@]}" exec-out cat "$remote_zip" | sha256sum) || fail 'Cannot verify the staged ZIP.'
@@ -429,9 +466,12 @@ main() {
     # The verified APK and ZIP have identical bytes; use an .apk extension for adb install.
     cp "$ZIP" "$RUN_DIR/Magisk-v30.7.apk" || fail 'Cannot prepare the verified Magisk APK.'
     manager_installed=1
-    if ! timeout 120 "${ADB[@]}" install -r "$RUN_DIR/Magisk-v30.7.apk"; then
+    install_rc=0
+    install_output=$(timeout 120 "${ADB[@]}" install -r "$RUN_DIR/Magisk-v30.7.apk" 2>&1 | tr -d '\r') || install_rc=$?
+    printf '%s\n' "$install_output"
+    if (( install_rc != 0 )) || ! grep -qx 'Success' <<< "$install_output"; then
         manager_installed=0
-        printf '%s\n' 'Magisk app installation failed; attempting a root check anyway.'
+        printf '%s\n' 'Magisk app installation was not confirmed; attempting a root check anyway.'
     fi
     printf '%s\n' 'Checking su. If Android shows a Magisk authorization prompt for ADB shell, approve it.'
     root_rc=0
