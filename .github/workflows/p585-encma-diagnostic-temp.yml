@@ -1,0 +1,41 @@
+---
+name: Read prior ENCMA build diagnostic
+on:
+  push:
+    branches:
+      - arena/6ccbd69f-mattermost-mobile
+    paths:
+      - .github/workflows/p585-encma-diagnostic-temp.yml
+permissions:
+  actions: read
+  checks: write
+  contents: read
+jobs:
+  extract-check-error:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Publish the APK content-check failure only
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/jobs/125427333849/logs" > "$RUNNER_TEMP/prior-job.log"
+          python3 - <<'PY'
+          import json, os, pathlib, re
+          temp = pathlib.Path(os.environ['RUNNER_TEMP'])
+          log = temp.joinpath('prior-job.log').read_text(errors='replace')
+          log = re.sub(r'\x1b\[[0-9;]*[A-Za-z]', '', log)
+          lines = [line for line in log.splitlines() if 'APK content verification failed:' in line]
+          if len(lines) != 1:
+              lines = [line for line in log.splitlines() if ('inspect_apks.py' in line and ('error' in line.lower() or 'can\'t open' in line.lower()))]
+          result = '\n'.join(lines[-3:])[-5000:] if lines else 'No recognizable APK-content error was found in the previous job log.'
+          payload = {
+              'name': 'p585-encma-prior-apk-check',
+              'head_sha': os.environ['GITHUB_SHA'],
+              'status': 'completed',
+              'conclusion': 'neutral',
+              'output': {'title': 'Prior experimental APK check', 'summary': result},
+          }
+          temp.joinpath('prior-check.json').write_text(json.dumps(payload))
+          PY
+          gh api "repos/$GITHUB_REPOSITORY/check-runs" --method POST --input "$RUNNER_TEMP/prior-check.json" >/dev/null
