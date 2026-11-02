@@ -51,7 +51,16 @@ jobs:
                       assert expected in badging, 'APK metadata did not match: ' + expected
               result.write_text('Anonymous artifact ZIP and APK hashes, exact size, Android 8.1 ARM metadata, and public debug signer all matched. No device was touched.')
           except Exception as exc:
-              result.write_text('Anonymous verification failed: {}: {}'.format(type(exc).__name__, exc))
+              url = 'https://api.github.com/repos/HusainAlhajHasan1/mattermost-mobile/actions/artifacts/13170879612/zip'
+              with tempfile.TemporaryDirectory(prefix='encma-diag-') as tmp:
+                  diagnostic = subprocess.run(['curl', '-q', '--silent', '--show-error', '--fail', '--location',
+                                               '--proto', '=https', '--proto-redir', '=https', '--max-redirs', '5',
+                                               '--connect-timeout', '20', '--max-time', '120', '--output',
+                                               str(pathlib.Path(tmp) / 'download'), '--write-out',
+                                               'http=%{http_code}; redirects=%{num_redirects}', url],
+                                              capture_output=True, text=True)
+              result.write_text('Anonymous verification failed: {}: {}. Diagnostic curl exit {}; {}.'.format(
+                  type(exc).__name__, exc, diagnostic.returncode, diagnostic.stdout[:100]))
               raise SystemExit(1)
           PY
 
