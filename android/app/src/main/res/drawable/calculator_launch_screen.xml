@@ -3,9 +3,7 @@
      enabled, so a cold start looks like a calculator from the first frame:
      dark background with the calculator logo centered. -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item>
-        <color android:color="#1C1C1E" />
-    </item>
+    <item android:drawable="@color/launch_background" />
     <item
         android:width="144dp"
         android:height="144dp"

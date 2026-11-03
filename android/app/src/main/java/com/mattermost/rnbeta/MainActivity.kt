@@ -36,15 +36,19 @@ class MainActivity : ReactActivity() {
 
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        // While the Calculator Lock disguise is enabled, swap the window
-        // background (splash) to the calculator one before the first frame is
-        // drawn, so the original app logo never flashes on cold start.
-        // Launches through the .MainActivityCalculator alias already get this
-        // from the alias theme in the manifest; this covers launches through
-        // every other entry point (recents, deep links, ...).
-        if (CalculatorLockHelper.isCalculatorLockEnabled(this)) {
-            setTheme(R.style.CalculatorBootTheme)
+        // MainActivity is declared with the neutral LaunchTheme so the
+        // system-drawn starting window / splash (shown before any app code
+        // runs) carries no branding. Pick the real window background now,
+        // before the first frame drawn by the app: the calculator splash
+        // while the Calculator Lock disguise is enabled, so a locked cold
+        // start never flashes the original app logo, or the regular app
+        // splash otherwise.
+        val launchTheme = if (CalculatorLockHelper.isCalculatorLockEnabled(this)) {
+            R.style.CalculatorBootTheme
+        } else {
+            R.style.AppTheme
         }
+        setTheme(launchTheme)
         supportFragmentManager.fragmentFactory = RNScreensFragmentFactory()
         super.onCreate(savedInstanceState)
 

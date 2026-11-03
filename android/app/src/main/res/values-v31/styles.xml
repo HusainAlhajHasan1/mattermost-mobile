@@ -10,8 +10,19 @@
     <style name="CalculatorBootTheme" parent="Theme.AppCompat.DayNight.NoActionBar">
         <item name="android:windowBackground">@drawable/calculator_launch_screen</item>
         <item name="android:editTextBackground">@drawable/rn_edit_text_material</item>
-        <item name="android:windowSplashScreenBackground">#1C1C1E</item>
+        <item name="android:windowSplashScreenBackground">@color/launch_background</item>
         <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_calculator_foreground</item>
+    </style>
+
+    <!-- Neutral LaunchTheme for Android 12+ (see values/styles.xml): the
+         system SplashScreen shows only the dark background and a fully
+         transparent icon, so no logo of either identity can flash before
+         MainActivity picks the real window background in onCreate. -->
+    <style name="LaunchTheme" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="android:windowBackground">@color/launch_background</item>
+        <item name="android:editTextBackground">@drawable/rn_edit_text_material</item>
+        <item name="android:windowSplashScreenBackground">@color/launch_background</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_splash_empty</item>
     </style>
 
 </resources>
