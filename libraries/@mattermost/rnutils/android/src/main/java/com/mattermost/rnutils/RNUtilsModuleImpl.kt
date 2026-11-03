@@ -5,6 +5,7 @@ import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.os.Build
 import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 import androidx.core.view.WindowInsetsControllerCompat
@@ -304,10 +305,22 @@ class RNUtilsModuleImpl(private val reactContext: ReactApplicationContext): Life
                     val controller = WindowInsetsControllerCompat(w, w.decorView)
                     controller.isAppearanceLightNavigationBars = lightIcons
 
-                    w.isNavigationBarContrastEnforced = false
-                    w.navigationBarDividerColor = Color.TRANSPARENT
+                    // isNavigationBarContrastEnforced exists since API 29
+                    // (Android 10) and navigationBarDividerColor since
+                    // API 28 (Android 9). minSdk is 26, so guard both:
+                    // calling them on Android 8/9 throws NoSuchMethodError
+                    // and crashes the app a few seconds after launch.
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        w.isNavigationBarContrastEnforced = false
+                    }
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                        w.navigationBarDividerColor = Color.TRANSPARENT
+                    }
                 }
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
+                // Catch Throwable, not just Exception: a cosmetic theming
+                // failure (e.g. NoSuchMethodError on an old/quirky OEM
+                // framework) must never crash the app.
                 android.util.Log.e("RNUtils", "Error setting navigation bar color: $colorHex", e)
             }
         }
