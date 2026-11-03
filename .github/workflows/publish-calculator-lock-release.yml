@@ -52,7 +52,7 @@ jobs:
           title="ENCMA with Calculator Lock (test build)"
           notes="Test build of the **ENCMA** app (Mattermost 2.46.0) with the **Calculator Lock** feature (Settings → Advanced Settings → Calculator App Lock): disguises the app as a working calculator behind an 8-digit PIN entered as \`PIN\` + \`=\`, and hides notifications while enabled.
 
-          **ENCMA-CalculatorLock-arm64.apk** — arm64-v8a, debug-signed sideload build (package `com.encma.hxmain`). Signed with the same debug key as previous ENCMA test builds, so it can be installed over them without uninstalling.
+          **ENCMA-CalculatorLock-arm64.apk** — arm64-v8a, debug-signed sideload build (package \`com.encma.hxmain\`). Signed with the same debug key as previous ENCMA test builds, so it can be installed over them without uninstalling.
 
           Source: PR #1, branch \`arena/391bd85f-mattermost-mobile\`."
 
