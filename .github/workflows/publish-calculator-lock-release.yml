@@ -16,7 +16,7 @@ on:
       build_run_id:
         description: "Run ID of calculator-lock-android-build to publish"
         required: false
-        default: "41594903793"
+        default: "41604391226"
 
 permissions:
   contents: write
@@ -32,7 +32,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh run download "${{ inputs.build_run_id || '41594903793' }}" \
+          gh run download "${{ inputs.build_run_id || '41604391226' }}" \
             --repo "$GITHUB_REPOSITORY" \
             --name encma-wireguard-arm64-release-server-ca-import \
             --dir release-assets
@@ -48,11 +48,11 @@ jobs:
           mv release-assets/app-release.apk release-assets/ENCMA-CalculatorLock-arm64.apk
           sha256sum release-assets/ENCMA-CalculatorLock-arm64.apk
 
-          tag="encma-calculator-lock.3"
+          tag="encma-calculator-lock.4"
           title="ENCMA with Calculator Lock (test build)"
           notes="Test build of the **ENCMA** app (Mattermost 2.46.0) with the **Calculator Lock** feature (Settings → Advanced Settings → Calculator App Lock): disguises the app as a working calculator behind an 8-digit PIN entered as \`PIN\` + \`=\`, and hides notifications while enabled.
 
-          **Update in this build:** the cold-start splash is now seamless from the very first frame. While the disguise is enabled the ENCMA loading screen no longer appears at all: launch goes from the dark calculator background, to the calculator logo, to the keypad.
+          **Update in this build:** Android Settings, the app-info screen and other system surfaces now show Calculator with the calculator icon (the application identity; Android cannot switch it at runtime, so it always uses the disguise identity). The launcher still shows ENCMA while the lock is off and Calculator while it is on, and the seamless calculator splash from the previous build is included.
 
           **ENCMA-CalculatorLock-arm64.apk** — arm64-v8a, debug-signed sideload build (package \`com.encma.hxmain\`). Signed with the same debug key as previous ENCMA test builds, so it can be installed over them without uninstalling.
 
