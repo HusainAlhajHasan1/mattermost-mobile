@@ -150,7 +150,10 @@ jobs:
           test -x "$aapt_bin"
           "$aapt_bin" dump badging "$apk" > "$RUNNER_TEMP/encma-apk-badging.txt"
           grep -F "package: name='com.encma.hxmain'" "$RUNNER_TEMP/encma-apk-badging.txt"
-          grep -F "application: label='ENCMA'" "$RUNNER_TEMP/encma-apk-badging.txt"
+          # Application identity (Settings/app info) is permanently the
+          # Calculator disguise; the launcher entry keeps the ENCMA label.
+          grep -F "application: label='Calculator'" "$RUNNER_TEMP/encma-apk-badging.txt"
+          grep "launchable-activity: name='com.mattermost.rnbeta.MainActivity'" "$RUNNER_TEMP/encma-apk-badging.txt" | grep -F "label='ENCMA'"
           ls -lh "$apk"
           sha256sum "$apk"
 
