@@ -70,6 +70,16 @@ export interface Spec extends TurboModule {
     removeChannelNotifications(serverUrl: string, channelId: string): void;
     removeThreadNotifications(serverUrl: string, threadId: string): void;
     removeServerNotifications(serverUrl: string): void;
+    removeAllDeliveredNotifications(): void;
+
+    // Calculator Lock: persists the lock flag where the native push
+    // notification handlers can read it while the JS runtime is not running
+    // (Android SharedPreferences / iOS App Group UserDefaults), and switches
+    // the launcher icon between the default and the Calculator disguise.
+    // iconName is 'Calculator' for the disguised icon, '' for the default.
+    setCalculatorLockEnabled(enabled: boolean): void;
+    getCalculatorLockEnabled(): boolean;
+    changeAppIcon(iconName: string): Promise<boolean>;
 
     // iOS only - guards against RUNNINGBOARD 0xdead10cc; null on Android or if declined.
     beginDatabaseActivity(serverUrl: string, task: string): Promise<string | null>;

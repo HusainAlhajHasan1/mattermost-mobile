@@ -241,6 +241,18 @@ object NotificationHelper {
         }
     }
 
+    fun removeAllDeliveredNotifications(context: Context) {
+        try {
+            val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            notificationManager.cancelAll()
+
+            val emptyMap: Map<String?, JSONObject?> = HashMap()
+            saveMap(context, emptyMap)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
     fun clearChannelOrThreadNotifications(context: Context, notification: Bundle) {
         val serverUrl = getServerUrl(notification)
         val channelId = getChannelId(notification)

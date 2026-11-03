@@ -1,7 +1,11 @@
 package com.mattermost.rnutils
 
 import android.app.Activity
+import android.content.ComponentName
+import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Color
+import android.os.Build
 import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 import androidx.core.view.WindowInsetsControllerCompat
@@ -10,6 +14,7 @@ import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReadableMap
 import com.facebook.react.bridge.WritableMap
+import com.mattermost.rnutils.helpers.CalculatorLockHelper
 import com.mattermost.rnutils.helpers.Notifications
 import com.mattermost.rnutils.helpers.RealPathUtil
 import com.mattermost.rnutils.helpers.SaveDataTask
@@ -217,6 +222,66 @@ class RNUtilsModuleImpl(private val reactContext: ReactApplicationContext): Life
         serverUrl?.let { Notifications.removeServerNotifications(it) }
     }
 
+    fun removeAllDeliveredNotifications() {
+        Notifications.removeAllDeliveredNotifications()
+    }
+
+    fun setCalculatorLockEnabled(enabled: Boolean) {
+        CalculatorLockHelper.setCalculatorLockEnabled(reactContext.applicationContext, enabled)
+    }
+
+    fun getCalculatorLockEnabled(): Boolean {
+        return CalculatorLockHelper.isCalculatorLockEnabled(reactContext.applicationContext)
+    }
+
+    fun changeAppIcon(iconName: String?, promise: Promise?) {
+        try {
+            val packageManager = reactContext.packageManager
+            val packageName = reactContext.packageName
+
+            // Resolve the actual launcher components instead of deriving
+            // class names from the package name: builds such as ENCMA use a
+            // different applicationId (com.encma.hxmain) than the code
+            // package hosting MainActivity (com.mattermost.rnbeta), and
+            // relative manifest names expand against the namespace, not the
+            // applicationId.
+            val launcherIntent = Intent(Intent.ACTION_MAIN)
+                    .addCategory(Intent.CATEGORY_LAUNCHER)
+                    .setPackage(packageName)
+            val launcherComponents = packageManager
+                    .queryIntentActivities(launcherIntent, PackageManager.MATCH_DISABLED_COMPONENTS)
+                    .map { ComponentName(it.activityInfo.packageName, it.activityInfo.name) }
+            val mainActivity = launcherComponents.firstOrNull { it.className.endsWith(".MainActivity") }
+            val calculatorAlias = launcherComponents.firstOrNull { it.className.endsWith(".MainActivityCalculator") }
+
+            if (mainActivity == null || calculatorAlias == null) {
+                promise?.reject("change_app_icon_error", "Launcher components not found: $launcherComponents")
+                return
+            }
+
+            val useCalculator = iconName == "Calculator"
+
+            // Enable the incoming launcher component before disabling the
+            // outgoing one so the package always keeps a launchable entry.
+            // DONT_KILL_APP prevents the running process from being killed
+            // when the component that launched it is disabled.
+            packageManager.setComponentEnabledSetting(
+                    if (useCalculator) calculatorAlias else mainActivity,
+                    PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
+                    PackageManager.DONT_KILL_APP
+            )
+            packageManager.setComponentEnabledSetting(
+                    if (useCalculator) mainActivity else calculatorAlias,
+                    PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                    PackageManager.DONT_KILL_APP
+            )
+
+            promise?.resolve(true)
+        } catch (e: Exception) {
+            promise?.reject("change_app_icon_error", e.message, e)
+        }
+    }
+
     fun beginDatabaseActivity(serverUrl: String?, task: String?, promise: Promise?) {
         promise?.resolve(null)
     }
@@ -240,10 +305,22 @@ class RNUtilsModuleImpl(private val reactContext: ReactApplicationContext): Life
                     val controller = WindowInsetsControllerCompat(w, w.decorView)
                     controller.isAppearanceLightNavigationBars = lightIcons
 
-                    w.isNavigationBarContrastEnforced = false
-                    w.navigationBarDividerColor = Color.TRANSPARENT
+                    // isNavigationBarContrastEnforced exists since API 29
+                    // (Android 10) and navigationBarDividerColor since
+                    // API 28 (Android 9). minSdk is 26, so guard both:
+                    // calling them on Android 8/9 throws NoSuchMethodError
+                    // and crashes the app a few seconds after launch.
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        w.isNavigationBarContrastEnforced = false
+                    }
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                        w.navigationBarDividerColor = Color.TRANSPARENT
+                    }
                 }
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
+                // Catch Throwable, not just Exception: a cosmetic theming
+                // failure (e.g. NoSuchMethodError on an old/quirky OEM
+                // framework) must never crash the app.
                 android.util.Log.e("RNUtils", "Error setting navigation bar color: $colorHex", e)
             }
         }

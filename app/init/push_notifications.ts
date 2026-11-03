@@ -27,6 +27,7 @@ import {Device, Events, PushNotification, Screens} from '@constants';
 import {EphemeralModeAuditEventKind} from '@constants/ephemeral_mode';
 import DatabaseManager from '@database/manager';
 import {DEFAULT_LOCALE, getLocalizedMessage} from '@i18n';
+import {clearDeliveredNotificationsIfLocked, isCalculatorLockedSync, isCalculatorLockEnabledSync} from '@managers/calculator_lock_manager';
 import EphemeralModeManager from '@managers/ephemeral_mode_manager';
 import {getServerDisplayName} from '@queries/app/servers';
 import {getCurrentChannelId} from '@queries/servers/system';
@@ -139,6 +140,11 @@ class PushNotificationsSingleton {
 
     handleInAppNotification = async (serverUrl: string, notification: NotificationWithData) => {
         const {payload} = notification;
+
+        // Calculator Lock: never surface chat previews while the app is disguised.
+        if (isCalculatorLockEnabledSync()) {
+            return;
+        }
 
         // Do not show overlay if this is a call-started message (the call_notification will alert the user)
         if (isCallsStartedMessage(payload)) {
@@ -295,6 +301,10 @@ class PushNotificationsSingleton {
         // including failures, for the same reason.
         try {
             await this.processNotification(notification);
+
+            // Calculator Lock: data is processed as usual, but nothing may
+            // remain visible in the notification tray while disguised.
+            clearDeliveredNotificationsIfLocked();
             completion(NotificationBackgroundFetchResult.NEW_DATA);
         } catch (error) {
             logWarning('onNotificationReceivedBackground', error);
@@ -316,9 +326,15 @@ class PushNotificationsSingleton {
             this.processNotification(notification);
         }
 
+        // Calculator Lock: while the app is disguised, notifications must
+        // not alert, accumulate a badge, or remain in the tray. The sound
+        // is also muted whenever the calculator is actually on screen.
+        const calculatorLockEnabled = isCalculatorLockEnabledSync();
+        clearDeliveredNotificationsIfLocked();
+
         // Always play a sound, except when this is a foreground notification about a call
-        const sound = !(notification.foreground && isCallsStartedMessage(notification.payload));
-        completion({alert: false, sound, badge: true});
+        const sound = !(notification.foreground && isCallsStartedMessage(notification.payload)) && !isCalculatorLockedSync();
+        completion({alert: false, sound, badge: !calculatorLockEnabled});
     };
 
     onRemoteNotificationsRegistered = async (event: Registered) => {

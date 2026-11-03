@@ -4,7 +4,7 @@
 import {PortalHost, PortalProvider} from '@gorhom/portal';
 import {Provider as EMMProvider} from '@mattermost/react-native-emm';
 import RNUtils from '@mattermost/rnutils';
-import {Stack, useNavigationContainerRef} from 'expo-router';
+import {router, Stack, useNavigationContainerRef} from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import {useCallback, useEffect, useMemo, useState} from 'react';
 import {IntlProvider} from 'react-intl';
@@ -19,6 +19,14 @@ import {useThemeByAppearanceWithDefault} from '@context/theme';
 import useDidMount from '@hooks/did_mount';
 import {DEFAULT_LOCALE, getTranslations} from '@i18n';
 import {cleanup, initialize} from '@init/app';
+import {
+    addWireGuardStateListener,
+    getWireGuardState,
+    isWireGuardRequired,
+    WireGuardStatus,
+    type WireGuardConnectionStatus,
+} from '@managers/wireguard_manager';
+import CalculatorLockContainer from '@screens/calculator_lock';
 import InAppNotificationContainer from '@screens/in_app_notification';
 import ReviewAppContainer from '@screens/review_app';
 import ShareFeedbackContainer from '@screens/share_feedback';
@@ -37,6 +45,7 @@ const loginFlowScreens = new Set<AvailableScreens>([
     Screens.SSO,
     Screens.MFA,
     Screens.FORGOT_PASSWORD,
+    Screens.VPN,
 ]);
 
 const styles = StyleSheet.create({
@@ -51,6 +60,7 @@ SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
     const [appReady, setAppReady] = useState(false);
+    const [vpnStatus, setVpnStatus] = useState<WireGuardConnectionStatus>();
     const navigationRef = useNavigationContainerRef();
     const currentScreen = useCurrentScreen();
     const [theme, setTheme] = useState(EphemeralStore.getTheme());
@@ -99,6 +109,43 @@ export default function RootLayout() {
             SplashScreen.hideAsync();
         }
     }, [appReady]);
+
+    useEffect(() => {
+        if (!appReady || !isWireGuardRequired()) {
+            return undefined;
+        }
+
+        let active = true;
+        const updateStatus = (newState: {status: WireGuardConnectionStatus}) => {
+            if (active) {
+                setVpnStatus(newState.status);
+            }
+        };
+        const removeListener = addWireGuardStateListener(updateStatus);
+        getWireGuardState().then(updateStatus).catch(() => {
+            if (active) {
+                setVpnStatus(WireGuardStatus.Failed);
+            }
+        });
+
+        return () => {
+            active = false;
+            removeListener();
+        };
+    }, [appReady]);
+
+    useEffect(() => {
+        if (
+            appReady &&
+            isWireGuardRequired() &&
+            vpnStatus &&
+            vpnStatus !== WireGuardStatus.Connected &&
+            currentScreen !== Screens.VPN &&
+            navigationRef.isReady()
+        ) {
+            router.replace('/vpn');
+        }
+    }, [appReady, currentScreen, navigationRef, vpnStatus]);
 
     useEffect(() => {
         const handleKeyboardHide = () => {
@@ -204,6 +251,7 @@ export default function RootLayout() {
                                     <Stack.Screen name='(unauthenticated)'/>
                                     <Stack.Screen name='(authenticated)'/>
                                     <Stack.Screen name='index'/>
+                                    <Stack.Screen name='vpn'/>
                                     <Stack.Screen
                                         name='(modals)'
                                         options={modalScreenOptions}
@@ -224,6 +272,8 @@ export default function RootLayout() {
                             <ReviewAppContainer/>
                             <PortalHost name='share_feedback'/>
                             <ShareFeedbackContainer/>
+                            <PortalHost name='calculator_lock'/>
+                            <CalculatorLockContainer/>
                         </PortalProvider>
                     </IntlProvider>
                 </EMMProvider>

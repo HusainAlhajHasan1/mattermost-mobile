@@ -361,6 +361,11 @@ jest.doMock('react-native', () => {
             removeChannelNotifications: jest.fn().mockImplementation(),
             removeThreadNotifications: jest.fn().mockImplementation(),
             removeServerNotifications: jest.fn().mockImplementation(),
+            removeAllDeliveredNotifications: jest.fn().mockImplementation(),
+
+            setCalculatorLockEnabled: jest.fn().mockImplementation(),
+            getCalculatorLockEnabled: jest.fn().mockReturnValue(false),
+            changeAppIcon: jest.fn().mockResolvedValue(true),
 
             createZipFile: jest.fn(),
             saveFile: jest.fn(),

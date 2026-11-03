@@ -102,6 +102,26 @@ class RNUtilsModule(context: ReactApplicationContext) :
     }
 
     @ReactMethod
+    fun removeAllDeliveredNotifications() {
+        implementation.removeAllDeliveredNotifications()
+    }
+
+    @ReactMethod
+    fun setCalculatorLockEnabled(enabled: Boolean) {
+        implementation.setCalculatorLockEnabled(enabled)
+    }
+
+    @ReactMethod(isBlockingSynchronousMethod = true)
+    fun getCalculatorLockEnabled(): Boolean {
+        return implementation.getCalculatorLockEnabled()
+    }
+
+    @ReactMethod
+    fun changeAppIcon(iconName: String?, promise: Promise?) {
+        implementation.changeAppIcon(iconName, promise)
+    }
+
+    @ReactMethod
     fun beginDatabaseActivity(serverUrl: String?, task: String?, promise: Promise?) {
         implementation.beginDatabaseActivity(serverUrl, task, promise)
     }

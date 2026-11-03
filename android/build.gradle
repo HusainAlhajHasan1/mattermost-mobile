@@ -1,7 +1,9 @@
 buildscript {
     ext {
         buildToolsVersion = "36.0.0"
-        minSdkVersion = 30
+        // Lowest supported Android version is 8.0 (API 26) so the app
+        // also runs on older physical devices, including 32-bit ones.
+        minSdkVersion = 26
         compileSdkVersion = 36
         targetSdkVersion = 36
         supportLibVersion = "36.0.0"
@@ -34,6 +36,7 @@ allprojects {
     repositories {
         mavenLocal()
         google()
+        mavenCentral()
         maven {
             url "$rootDir/../detox/node_modules/detox/Detox-android"
         }

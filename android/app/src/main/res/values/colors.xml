@@ -3,4 +3,8 @@
     <color name="white">#FFFFFF</color>
     <color name="transparent">#00000000</color>
     <color name="splashscreen_bg">#FFFFFF</color>
+    <!-- Neutral dark background of LaunchTheme and of the Calculator Lock
+         splash (calculator app background). Intentionally identical in day
+         and night mode so the disguise looks the same in both. -->
+    <color name="launch_background">#1C1C1E</color>
 </resources>

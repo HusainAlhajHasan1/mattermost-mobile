@@ -10,6 +10,7 @@ import com.facebook.react.ReactActivityDelegate
 import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint
 import com.facebook.react.defaults.DefaultReactActivityDelegate
 import com.mattermost.hardware.keyboard.MattermostHardwareKeyboardImpl
+import com.mattermost.rnutils.helpers.CalculatorLockHelper
 import com.mattermost.rnutils.helpers.FoldableObserver
 import com.swmansion.rnscreens.fragment.restoration.RNScreensFragmentFactory;
 import expo.modules.ReactActivityDelegateWrapper
@@ -35,6 +36,19 @@ class MainActivity : ReactActivity() {
 
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // MainActivity is declared with the neutral LaunchTheme so the
+        // system-drawn starting window / splash (shown before any app code
+        // runs) carries no branding. Pick the real window background now,
+        // before the first frame drawn by the app: the calculator splash
+        // while the Calculator Lock disguise is enabled, so a locked cold
+        // start never flashes the original app logo, or the regular app
+        // splash otherwise.
+        val launchTheme = if (CalculatorLockHelper.isCalculatorLockEnabled(this)) {
+            R.style.CalculatorBootTheme
+        } else {
+            R.style.AppTheme
+        }
+        setTheme(launchTheme)
         supportFragmentManager.fragmentFactory = RNScreensFragmentFactory()
         super.onCreate(savedInstanceState)
 

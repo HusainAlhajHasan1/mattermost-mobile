@@ -96,6 +96,11 @@ import React
         })
     }
     
+    @objc public func removeAllDeliveredNotifications() {
+        notificationCenter.removeAllDeliveredNotifications()
+        notificationCenter.setBadgeCount(0) { _ in }
+    }
+    
     @objc public func removeServerNotifications(serverUrl: String) {
         notificationCenter.getDeliveredNotifications(completionHandler: {notifications in
             var notificationIds = [String]()

@@ -1,5 +1,6 @@
 import Foundation
 import React
+import UIKit
 
 @objc public class RNUtilsWrapper: NSObject {
     @objc public weak var delegate: RNUtilsDelegate? = nil
@@ -113,6 +114,43 @@ import React
         }
         
         return appGroupId
+    }
+    
+    // MARK: - Calculator Lock
+    
+    // Key shared with the NotificationService extension, which reads the
+    // flag from the App Group defaults via Gekidou.Preferences so it can
+    // disguise notifications while Calculator Lock is enabled.
+    private static let calculatorLockEnabledKey = "CalculatorLockEnabled"
+    private static let calculatorAlternateIconName = "CalculatorIcon"
+    
+    @objc public func setCalculatorLockEnabled(_ enabled: Bool) {
+        let defaults = UserDefaults(suiteName: getAppGroupId())
+        defaults?.set(enabled, forKey: RNUtilsWrapper.calculatorLockEnabledKey)
+    }
+    
+    @objc public func getCalculatorLockEnabled() -> Bool {
+        let defaults = UserDefaults(suiteName: getAppGroupId())
+        return defaults?.bool(forKey: RNUtilsWrapper.calculatorLockEnabledKey) ?? false
+    }
+    
+    @objc public func changeAppIcon(_ iconName: String, completion: @escaping (Bool, Error?) -> Void) {
+        DispatchQueue.main.async {
+            guard UIApplication.shared.supportsAlternateIcons else {
+                completion(false, nil)
+                return
+            }
+            
+            let alternateIconName: String? = iconName == "Calculator" ? RNUtilsWrapper.calculatorAlternateIconName : nil
+            if UIApplication.shared.alternateIconName == alternateIconName {
+                completion(true, nil)
+                return
+            }
+            
+            UIApplication.shared.setAlternateIconName(alternateIconName) { error in
+                completion(error == nil, error)
+            }
+        }
     }
     
     @objc public func appGroupSharedDirectory() -> Dictionary<String, Any> {

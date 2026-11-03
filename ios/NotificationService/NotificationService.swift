@@ -105,6 +105,28 @@ class NotificationService: UNNotificationServiceExtension {
 
     Gekidou.GekidouLogger.shared.log(.info, "NotificationService didReceive: received notification")
     bestAttemptContent = (request.content.mutableCopy() as? UNMutableNotificationContent)
+
+    // Calculator Lock: while the app is disguised, never surface sender,
+    // channel, or message content. Deliver a generic, silent alert instead
+    // and skip all content fetching and intent donation. The flag is
+    // written by the main app (RNUtils.setCalculatorLockEnabled) to the
+    // App Group defaults.
+    if (Gekidou.Preferences.default.object(forKey: "CalculatorLockEnabled") as? NSNumber)?.boolValue == true,
+       let disguised = bestAttemptContent {
+      disguised.title = "Calculator"
+      disguised.subtitle = ""
+      disguised.body = ""
+      disguised.summaryArgument = ""
+      disguised.threadIdentifier = ""
+      disguised.categoryIdentifier = ""
+      disguised.sound = nil
+      disguised.badge = nil
+      disguised.interruptionLevel = .passive
+      Gekidou.GekidouLogger.shared.log(.info, "NotificationService didReceive: Calculator Lock enabled, delivering disguised notification")
+      contentHandlerWrapper?.callOnce(with: disguised)
+      return
+    }
+
     if let bestAttemptContent = bestAttemptContent {
       PushNotification.default.postNotificationReceipt(bestAttemptContent, completionHandler: {[weak self] notification in
         guard let self = self else { return }

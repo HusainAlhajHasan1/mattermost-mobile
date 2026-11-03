@@ -10,6 +10,7 @@ const APPS_FORM = 'apps_form';
 const BOTTOM_SHEET = '(bottom_sheet)';
 const GENERIC_BOTTOM_SHEET = 'generic_bottom_sheet';
 const BROWSE_CHANNELS = '(browse_channels)';
+const CALCULATOR_LOCK = 'calculator_lock';
 const CALL = 'call';
 const CALL_PARTICIPANTS = 'call_participants';
 const CALL_HOST_CONTROLS = 'call_host_controls';
@@ -88,6 +89,7 @@ const THREAD = 'thread';
 const THREAD_OPTIONS = 'thread_options';
 const USER_PROFILE = 'user_profile';
 const SHOW_TRANSLATION = 'show_translation';
+const VPN = 'vpn';
 
 export default {
     ABOUT,
@@ -95,6 +97,7 @@ export default {
     APPS_FORM,
     BOTTOM_SHEET,
     BROWSE_CHANNELS,
+    CALCULATOR_LOCK,
     CALL,
     CALL_PARTICIPANTS,
     CALL_HOST_CONTROLS,
@@ -175,6 +178,7 @@ export default {
     THREAD_OPTIONS,
     USER_PROFILE,
     SHOW_TRANSLATION,
+    VPN,
     ...PLAYBOOKS_SCREENS,
     ...AGENTS_SCREENS,
 } as const;

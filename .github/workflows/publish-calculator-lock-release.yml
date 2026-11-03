@@ -1,0 +1,83 @@
+---
+name: publish-calculator-lock-release
+
+# Publishes the ENCMA APKs built by phase1-android-build.yml (arm64-v8a,
+# armeabi-v7a and universal) to a GitHub Release so they have permanent,
+# direct download links (Actions artifacts expire after 30 days).
+
+on:
+  push:
+    branches:
+      - arena/391bd85f-mattermost-mobile
+    paths:
+      - .github/workflows/publish-calculator-lock-release.yml
+  workflow_dispatch:
+    inputs:
+      build_run_id:
+        description: "Run ID of the ENCMA build (phase1-android-build) to publish"
+        required: false
+        default: "41713198010"
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish-release:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Download APKs from the build run
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh run download "${{ inputs.build_run_id || '41713198010' }}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name encma-wireguard-release-server-ca-import \
+            --dir release-assets
+
+      - name: Publish GitHub Release with the APKs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          find release-assets -name '*.apk' -exec ls -lh {} +
+
+          src_arm64="$(find release-assets -name 'app-arm64-v8a-release.apk' | head -n 1)"
+          src_arm32="$(find release-assets -name 'app-armeabi-v7a-release.apk' | head -n 1)"
+          src_universal="$(find release-assets -name 'app-universal-release.apk' | head -n 1)"
+          test -s "$src_arm64"
+          test -s "$src_arm32"
+          test -s "$src_universal"
+
+          mkdir -p release-apks
+          cp "$src_arm64" release-apks/ENCMA-CalculatorLock-arm64.apk
+          cp "$src_arm32" release-apks/ENCMA-CalculatorLock-arm32.apk
+          cp "$src_universal" release-apks/ENCMA-CalculatorLock-universal.apk
+          sha256sum release-apks/*.apk
+
+          tag="encma-calculator-lock.7"
+          title="ENCMA with Calculator Lock (test build)"
+          notes="Test build of the **ENCMA** app (Mattermost 2.46.0) with the **Calculator Lock** feature (Settings → Advanced Settings → Calculator App Lock): disguises the app as a working calculator behind an 8-digit PIN entered as \`PIN\` + \`=\`, and hides notifications while enabled. Android Settings/app info also show Calculator, and the cold-start splash is calculator-only while locked.
+
+          **Update in this build:** the Android 8 launch crash is fixed at the root. A device log from a Galaxy Tab A (Android 8.1) showed a NoSuchMethodError for a navigation-bar API that only exists on Android 10+, called a few seconds after launch from the RNUtils module; it (and its Android 9 sibling call) are now version-guarded, and the whole native codebase was audited for other too-new API calls. Keeps the previous improvements: native libraries extracted at install time (legacy packaging old devices load reliably) and smaller downloads. Works on **Android 8.0 and newer**, every phone architecture. Download **one** file:
+
+          - **ENCMA-CalculatorLock-arm64.apk** — modern 64-bit phones (most phones). Smallest download for them.
+          - **ENCMA-CalculatorLock-arm32.apk** — older 32-bit phones.
+          - **ENCMA-CalculatorLock-universal.apk** — works on every phone if you are not sure; larger download.
+
+          Debug-signed sideload builds (package \`com.encma.hxmain\`), signed with the same key as previous ENCMA test builds, so they install over earlier builds without uninstalling.
+
+          Source: PR #1, branch \`arena/391bd85f-mattermost-mobile\`."
+
+          if gh release view "$tag" > /dev/null 2>&1; then
+            gh release upload "$tag" release-apks/*.apk --clobber
+          else
+            gh release create "$tag" release-apks/*.apk \
+              --target "$GITHUB_SHA" \
+              --prerelease \
+              --title "$title" \
+              --notes "$notes"
+          fi
