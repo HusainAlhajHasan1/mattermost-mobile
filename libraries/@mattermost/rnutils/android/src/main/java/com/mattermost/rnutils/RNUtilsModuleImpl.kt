@@ -2,6 +2,7 @@ package com.mattermost.rnutils
 
 import android.app.Activity
 import android.content.ComponentName
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
 import androidx.core.content.ContextCompat
@@ -234,12 +235,30 @@ class RNUtilsModuleImpl(private val reactContext: ReactApplicationContext): Life
 
     fun changeAppIcon(iconName: String?, promise: Promise?) {
         try {
-            val packageName = reactContext.packageName
-            val mainActivity = ComponentName(packageName, "$packageName.MainActivity")
-            val calculatorAlias = ComponentName(packageName, "$packageName.MainActivityCalculator")
-            val useCalculator = iconName == "Calculator"
-
             val packageManager = reactContext.packageManager
+            val packageName = reactContext.packageName
+
+            // Resolve the actual launcher components instead of deriving
+            // class names from the package name: builds such as ENCMA use a
+            // different applicationId (com.encma.hxmain) than the code
+            // package hosting MainActivity (com.mattermost.rnbeta), and
+            // relative manifest names expand against the namespace, not the
+            // applicationId.
+            val launcherIntent = Intent(Intent.ACTION_MAIN)
+                    .addCategory(Intent.CATEGORY_LAUNCHER)
+                    .setPackage(packageName)
+            val launcherComponents = packageManager
+                    .queryIntentActivities(launcherIntent, PackageManager.MATCH_DISABLED_COMPONENTS)
+                    .map { ComponentName(it.activityInfo.packageName, it.activityInfo.name) }
+            val mainActivity = launcherComponents.firstOrNull { it.className.endsWith(".MainActivity") }
+            val calculatorAlias = launcherComponents.firstOrNull { it.className.endsWith(".MainActivityCalculator") }
+
+            if (mainActivity == null || calculatorAlias == null) {
+                promise?.reject("change_app_icon_error", "Launcher components not found: $launcherComponents")
+                return
+            }
+
+            val useCalculator = iconName == "Calculator"
 
             // Enable the incoming launcher component before disabling the
             // outgoing one so the package always keeps a launchable entry.
