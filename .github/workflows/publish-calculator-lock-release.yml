@@ -16,7 +16,7 @@ on:
       build_run_id:
         description: "Run ID of the ENCMA build (phase1-android-build) to publish"
         required: false
-        default: "41704430388"
+        default: "41713198010"
 
 permissions:
   contents: write
@@ -32,7 +32,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh run download "${{ inputs.build_run_id || '41704430388' }}" \
+          gh run download "${{ inputs.build_run_id || '41713198010' }}" \
             --repo "$GITHUB_REPOSITORY" \
             --name encma-wireguard-release-server-ca-import \
             --dir release-assets
@@ -58,11 +58,11 @@ jobs:
           cp "$src_universal" release-apks/ENCMA-CalculatorLock-universal.apk
           sha256sum release-apks/*.apk
 
-          tag="encma-calculator-lock.6"
+          tag="encma-calculator-lock.7"
           title="ENCMA with Calculator Lock (test build)"
           notes="Test build of the **ENCMA** app (Mattermost 2.46.0) with the **Calculator Lock** feature (Settings → Advanced Settings → Calculator App Lock): disguises the app as a working calculator behind an 8-digit PIN entered as \`PIN\` + \`=\`, and hides notifications while enabled. Android Settings/app info also show Calculator, and the cold-start splash is calculator-only while locked.
 
-          **Update in this build:** launch fix for old 32-bit devices (e.g. Galaxy Tab A on Android 8) that installed the previous build but errored on open — native libraries are now extracted at install time (legacy packaging that old devices load reliably), startup is hardened, and downloads are much smaller. Works on **Android 8.0 and newer**, every phone architecture. Download **one** file:
+          **Update in this build:** the Android 8 launch crash is fixed at the root. A device log from a Galaxy Tab A (Android 8.1) showed a NoSuchMethodError for a navigation-bar API that only exists on Android 10+, called a few seconds after launch from the RNUtils module; it (and its Android 9 sibling call) are now version-guarded, and the whole native codebase was audited for other too-new API calls. Keeps the previous improvements: native libraries extracted at install time (legacy packaging old devices load reliably) and smaller downloads. Works on **Android 8.0 and newer**, every phone architecture. Download **one** file:
 
           - **ENCMA-CalculatorLock-arm64.apk** — modern 64-bit phones (most phones). Smallest download for them.
           - **ENCMA-CalculatorLock-arm32.apk** — older 32-bit phones.
