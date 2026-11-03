@@ -198,6 +198,59 @@ jobs:
           unzip -l "$out/app-armeabi-v7a-release.apk" | grep -E "lib/armeabi-v7a/libwg.*\.so$"
           unzip -l "$out/app-universal-release.apk" | grep -E "lib/armeabi-v7a/libwg.*\.so$"
 
+      - name: Publish APK native library inventory
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          out="android/app/build/outputs/apk/release"
+          inv="$RUNNER_TEMP/native-inventory.txt"
+          uni="$out/app-universal-release.apk"
+          aapt_bin="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)"
+          ls -lh "$out"/*.apk > "$inv"
+          {
+            echo
+            echo "== app-armeabi-v7a-release.apk badging (key lines) =="
+            "$aapt_bin" dump badging "$out/app-armeabi-v7a-release.apk" | grep -E "^package:|^sdkVersion:|^targetSdkVersion:|^native-code:|^application:|^launchable-activity:" || true
+            echo
+            echo "== extractNativeLibs in built manifest (arm32) =="
+            "$aapt_bin" dump xmltree "$out/app-armeabi-v7a-release.apk" AndroidManifest.xml | grep -i "extractNativeLibs" || echo "(attribute not printed)"
+            echo
+            echo "== lib/arm64-v8a (universal APK) =="
+            unzip -l "$uni" | grep -oE "lib/arm64-v8a/[^ ]+\.so" | sed 's|.*/||' | sort -u || true
+            echo
+            echo "== lib/armeabi-v7a (universal APK) =="
+            unzip -l "$uni" | grep -oE "lib/armeabi-v7a/[^ ]+\.so" | sed 's|.*/||' | sort -u || true
+            echo
+            echo "== present in arm64-v8a ONLY (missing on 32-bit) =="
+            comm -23 <(unzip -l "$uni" | grep -oE "lib/arm64-v8a/[^ ]+\.so" | sed 's|.*/||' | sort -u) <(unzip -l "$uni" | grep -oE "lib/armeabi-v7a/[^ ]+\.so" | sed 's|.*/||' | sort -u)
+            echo
+            echo "== present in armeabi-v7a ONLY =="
+            comm -13 <(unzip -l "$uni" | grep -oE "lib/arm64-v8a/[^ ]+\.so" | sed 's|.*/||' | sort -u) <(unzip -l "$uni" | grep -oE "lib/armeabi-v7a/[^ ]+\.so" | sed 's|.*/||' | sort -u)
+          } >> "$inv"
+          cat "$inv"
+          node - <<'NODE'
+          const fs = require('fs');
+          const temp = process.env.RUNNER_TEMP;
+          const payload = {
+            name: 'encma-apk-native-inventory',
+            head_sha: process.env.HEAD_SHA,
+            status: 'completed',
+            conclusion: 'neutral',
+            details_url: process.env.RUN_URL,
+            output: {
+              title: 'APK native library inventory (per ABI)',
+              summary: 'Native .so inventory of the built APKs with per-ABI differences, for diagnosing old-device launch issues.',
+              text: fs.readFileSync(`${temp}/native-inventory.txt`, 'utf8'),
+            },
+          };
+          fs.writeFileSync(`${temp}/inventory-check-run.json`, JSON.stringify(payload));
+          NODE
+          gh api "repos/$GH_REPO/check-runs" --method POST --input "$RUNNER_TEMP/inventory-check-run.json"
+
       - name: Upload installable APKs (arm64, arm32, universal)
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

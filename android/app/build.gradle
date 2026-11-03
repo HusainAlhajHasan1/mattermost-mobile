@@ -149,6 +149,16 @@ android {
             keyPassword 'android'
         }
     }
+    packaging {
+        jniLibs {
+            // Extract native libraries at install time (legacy packaging,
+            // android:extractNativeLibs=true) instead of loading them
+            // directly from the APK. Some older devices/ROMs - e.g. 32-bit
+            // Android 8 tablets - and libraries that dlopen sibling binaries
+            // fail to load native code with the modern default packaging.
+            useLegacyPackaging = true
+        }
+    }
     splits {
         abi {
             reset()

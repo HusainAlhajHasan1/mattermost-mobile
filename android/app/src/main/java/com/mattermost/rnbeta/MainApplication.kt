@@ -56,8 +56,15 @@ class MainApplication : Application(), ReactApplication, INotificationsApplicati
     override fun onCreate() {
         super.onCreate()
 
-        // Initialize Sentry early for native crash reporting
-        RNSentrySDK.init(this)
+        // Initialize Sentry early for native crash reporting. It runs
+        // before anything else loads native code, so never let a failure
+        // (e.g. its native library failing to load on an old device)
+        // take the whole app down at startup.
+        try {
+            RNSentrySDK.init(this)
+        } catch (t: Throwable) {
+            android.util.Log.e("MainApplication", "Sentry init failed", t)
+        }
 
         // Delete any previous temp files created by the app
         val tempFolder = File(applicationContext.cacheDir, RealPathUtil.CACHE_DIR_NAME)
