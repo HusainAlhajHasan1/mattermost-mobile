@@ -1,7 +1,7 @@
 ---
 name: publish-calculator-lock-release
 
-# Publishes the APK built by calculator-lock-android-build.yml to a GitHub
+# Publishes the ENCMA APK built by phase1-android-build.yml to a GitHub
 # Release so it has a permanent, direct download link (Actions artifacts
 # expire after 30 days).
 
@@ -34,7 +34,7 @@ jobs:
         run: |
           gh run download "${{ inputs.build_run_id || '41565464526' }}" \
             --repo "$GITHUB_REPOSITORY" \
-            --name mattermost-calculator-lock-arm64-apk \
+            --name encma-wireguard-arm64-release-server-ca-import \
             --dir release-assets
 
       - name: Publish GitHub Release with the APK
@@ -45,21 +45,21 @@ jobs:
           set -euo pipefail
           ls -lh release-assets/
           test -s release-assets/app-release.apk
-          mv release-assets/app-release.apk release-assets/Mattermost-CalculatorLock-arm64.apk
-          sha256sum release-assets/Mattermost-CalculatorLock-arm64.apk
+          mv release-assets/app-release.apk release-assets/ENCMA-CalculatorLock-arm64.apk
+          sha256sum release-assets/ENCMA-CalculatorLock-arm64.apk
 
-          tag="v2.46.0-calculator-lock.1"
-          title="Mattermost with Calculator Lock (test build)"
-          notes="Test build of Mattermost 2.46.0 with the **Calculator Lock** feature (Settings → Advanced Settings → Calculator App Lock): disguises the app as a working calculator behind an 8-digit PIN entered as \`PIN\` + \`=\`, and hides notifications while enabled.
+          tag="encma-calculator-lock.1"
+          title="ENCMA with Calculator Lock (test build)"
+          notes="Test build of the **ENCMA** app (Mattermost 2.46.0) with the **Calculator Lock** feature (Settings → Advanced Settings → Calculator App Lock): disguises the app as a working calculator behind an 8-digit PIN entered as \`PIN\` + \`=\`, and hides notifications while enabled.
 
-          **Mattermost-CalculatorLock-arm64.apk** — arm64-v8a, debug-signed sideload build. If the official Mattermost Beta (same package name, different signature) is already installed, uninstall it first — note this removes its local data and you will need to log in again.
+          **ENCMA-CalculatorLock-arm64.apk** — arm64-v8a, debug-signed sideload build (package `com.encma.hxmain`). Signed with the same debug key as previous ENCMA test builds, so it can be installed over them without uninstalling.
 
           Source: PR #1, branch \`arena/391bd85f-mattermost-mobile\`."
 
           if gh release view "$tag" > /dev/null 2>&1; then
-            gh release upload "$tag" release-assets/Mattermost-CalculatorLock-arm64.apk --clobber
+            gh release upload "$tag" release-assets/ENCMA-CalculatorLock-arm64.apk --clobber
           else
-            gh release create "$tag" release-assets/Mattermost-CalculatorLock-arm64.apk \
+            gh release create "$tag" release-assets/ENCMA-CalculatorLock-arm64.apk \
               --target "$GITHUB_SHA" \
               --prerelease \
               --title "$title" \

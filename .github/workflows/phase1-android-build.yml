@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - arena/1485ca55-mattermost-mobile
+      - arena/391bd85f-mattermost-mobile
   workflow_dispatch:
 
 permissions:
