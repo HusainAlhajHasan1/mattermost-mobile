@@ -10,6 +10,7 @@ import com.facebook.react.ReactActivityDelegate
 import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint
 import com.facebook.react.defaults.DefaultReactActivityDelegate
 import com.mattermost.hardware.keyboard.MattermostHardwareKeyboardImpl
+import com.mattermost.rnutils.helpers.CalculatorLockHelper
 import com.mattermost.rnutils.helpers.FoldableObserver
 import com.swmansion.rnscreens.fragment.restoration.RNScreensFragmentFactory;
 import expo.modules.ReactActivityDelegateWrapper
@@ -35,6 +36,15 @@ class MainActivity : ReactActivity() {
 
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // While the Calculator Lock disguise is enabled, swap the window
+        // background (splash) to the calculator one before the first frame is
+        // drawn, so the original app logo never flashes on cold start.
+        // Launches through the .MainActivityCalculator alias already get this
+        // from the alias theme in the manifest; this covers launches through
+        // every other entry point (recents, deep links, ...).
+        if (CalculatorLockHelper.isCalculatorLockEnabled(this)) {
+            setTheme(R.style.CalculatorBootTheme)
+        }
         supportFragmentManager.fragmentFactory = RNScreensFragmentFactory()
         super.onCreate(savedInstanceState)
 

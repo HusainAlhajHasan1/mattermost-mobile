@@ -8,4 +8,16 @@
 
     </style>
 
+    <!-- Calculator Lock disguise theme: identical to AppTheme except the
+         window background (splash) shows the calculator logo on #1C1C1E, so
+         a cold start never flashes the original app logo while the disguise
+         is enabled. Applied to the .MainActivityCalculator alias in the
+         manifest and selected at runtime by MainActivity when the lock is
+         enabled. Android 12+ SplashScreen attributes live in
+         values-v31/styles.xml. -->
+    <style name="CalculatorBootTheme" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="android:windowBackground">@drawable/calculator_launch_screen</item>
+        <item name="android:editTextBackground">@drawable/rn_edit_text_material</item>
+    </style>
+
 </resources>

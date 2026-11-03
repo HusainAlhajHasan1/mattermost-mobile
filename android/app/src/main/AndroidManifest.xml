@@ -112,6 +112,7 @@
         android:icon="@mipmap/ic_calculator"
         android:roundIcon="@mipmap/ic_calculator"
         android:label="Calculator"
+        android:theme="@style/CalculatorBootTheme"
         android:targetActivity=".MainActivity"
       >
         <intent-filter>
