@@ -16,7 +16,7 @@ on:
       build_run_id:
         description: "Run ID of calculator-lock-android-build to publish"
         required: false
-        default: "41565464526"
+        default: "41569673774"
 
 permissions:
   contents: write
@@ -32,7 +32,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh run download "${{ inputs.build_run_id || '41565464526' }}" \
+          gh run download "${{ inputs.build_run_id || '41569673774' }}" \
             --repo "$GITHUB_REPOSITORY" \
             --name encma-wireguard-arm64-release-server-ca-import \
             --dir release-assets
