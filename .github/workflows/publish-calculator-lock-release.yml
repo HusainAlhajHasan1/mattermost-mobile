@@ -1,9 +1,9 @@
 ---
 name: publish-calculator-lock-release
 
-# Publishes the ENCMA APK built by phase1-android-build.yml to a GitHub
-# Release so it has a permanent, direct download link (Actions artifacts
-# expire after 30 days).
+# Publishes the ENCMA APKs built by phase1-android-build.yml (arm64-v8a,
+# armeabi-v7a and universal) to a GitHub Release so they have permanent,
+# direct download links (Actions artifacts expire after 30 days).
 
 on:
   push:
@@ -14,9 +14,9 @@ on:
   workflow_dispatch:
     inputs:
       build_run_id:
-        description: "Run ID of calculator-lock-android-build to publish"
+        description: "Run ID of the ENCMA build (phase1-android-build) to publish"
         required: false
-        default: "41604391226"
+        default: "41620275557"
 
 permissions:
   contents: write
@@ -28,40 +28,54 @@ jobs:
     timeout-minutes: 10
 
     steps:
-      - name: Download APK from the build run
+      - name: Download APKs from the build run
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh run download "${{ inputs.build_run_id || '41604391226' }}" \
+          gh run download "${{ inputs.build_run_id || '41620275557' }}" \
             --repo "$GITHUB_REPOSITORY" \
-            --name encma-wireguard-arm64-release-server-ca-import \
+            --name encma-wireguard-release-server-ca-import \
             --dir release-assets
 
-      - name: Publish GitHub Release with the APK
+      - name: Publish GitHub Release with the APKs
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          ls -lh release-assets/
-          test -s release-assets/app-release.apk
-          mv release-assets/app-release.apk release-assets/ENCMA-CalculatorLock-arm64.apk
-          sha256sum release-assets/ENCMA-CalculatorLock-arm64.apk
+          find release-assets -name '*.apk' -exec ls -lh {} +
 
-          tag="encma-calculator-lock.4"
+          src_arm64="$(find release-assets -name 'app-arm64-v8a-release.apk' | head -n 1)"
+          src_arm32="$(find release-assets -name 'app-armeabi-v7a-release.apk' | head -n 1)"
+          src_universal="$(find release-assets -name 'app-universal-release.apk' | head -n 1)"
+          test -s "$src_arm64"
+          test -s "$src_arm32"
+          test -s "$src_universal"
+
+          mkdir -p release-apks
+          cp "$src_arm64" release-apks/ENCMA-CalculatorLock-arm64.apk
+          cp "$src_arm32" release-apks/ENCMA-CalculatorLock-arm32.apk
+          cp "$src_universal" release-apks/ENCMA-CalculatorLock-universal.apk
+          sha256sum release-apks/*.apk
+
+          tag="encma-calculator-lock.5"
           title="ENCMA with Calculator Lock (test build)"
-          notes="Test build of the **ENCMA** app (Mattermost 2.46.0) with the **Calculator Lock** feature (Settings → Advanced Settings → Calculator App Lock): disguises the app as a working calculator behind an 8-digit PIN entered as \`PIN\` + \`=\`, and hides notifications while enabled.
+          notes="Test build of the **ENCMA** app (Mattermost 2.46.0) with the **Calculator Lock** feature (Settings → Advanced Settings → Calculator App Lock): disguises the app as a working calculator behind an 8-digit PIN entered as \`PIN\` + \`=\`, and hides notifications while enabled. Android Settings/app info also show Calculator, and the cold-start splash is calculator-only while locked.
 
-          **Update in this build:** Android Settings, the app-info screen and other system surfaces now show Calculator with the calculator icon (the application identity; Android cannot switch it at runtime, so it always uses the disguise identity). The launcher still shows ENCMA while the lock is off and Calculator while it is on, and the seamless calculator splash from the previous build is included.
+          **Update in this build:** now works on **Android 8.0 and newer** and on every phone architecture. Download **one** file:
 
-          **ENCMA-CalculatorLock-arm64.apk** — arm64-v8a, debug-signed sideload build (package \`com.encma.hxmain\`). Signed with the same debug key as previous ENCMA test builds, so it can be installed over them without uninstalling.
+          - **ENCMA-CalculatorLock-arm64.apk** — modern 64-bit phones (most phones). Smallest download for them.
+          - **ENCMA-CalculatorLock-arm32.apk** — older 32-bit phones.
+          - **ENCMA-CalculatorLock-universal.apk** — works on every phone if you are not sure; larger download.
+
+          Debug-signed sideload builds (package \`com.encma.hxmain\`), signed with the same key as previous ENCMA test builds, so they install over earlier builds without uninstalling.
 
           Source: PR #1, branch \`arena/391bd85f-mattermost-mobile\`."
 
           if gh release view "$tag" > /dev/null 2>&1; then
-            gh release upload "$tag" release-assets/ENCMA-CalculatorLock-arm64.apk --clobber
+            gh release upload "$tag" release-apks/*.apk --clobber
           else
-            gh release create "$tag" release-assets/ENCMA-CalculatorLock-arm64.apk \
+            gh release create "$tag" release-apks/*.apk \
               --target "$GITHUB_SHA" \
               --prerelease \
               --title "$title" \
