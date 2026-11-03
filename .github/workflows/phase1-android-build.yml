@@ -6,6 +6,10 @@ on:
     branches:
       - arena/1485ca55-mattermost-mobile
       - arena/391bd85f-mattermost-mobile
+    # Publishing a release only edits the publisher workflow; an APK
+    # rebuild for that would just reproduce an existing artifact.
+    paths-ignore:
+      - .github/workflows/publish-calculator-lock-release.yml
   workflow_dispatch:
 
 permissions:
