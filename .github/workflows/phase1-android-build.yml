@@ -140,27 +140,71 @@ jobs:
 
       - name: Build ENCMA Android application with per-app WireGuard
         working-directory: android
-        run: ./gradlew :app:assembleRelease -PreactNativeArchitectures=arm64-v8a --stacktrace
+        # Architectures and ABI splits come from android/gradle.properties:
+        # physical phones only (arm64-v8a + armeabi-v7a), emitted as
+        # per-ABI APKs plus one universal APK, minSdk 26 (Android 8.0).
+        run: ./gradlew :app:assembleRelease --stacktrace
 
       - name: Verify ENCMA APK identity and output
         run: |
-          apk="android/app/build/outputs/apk/release/app-release.apk"
-          test -s "$apk"
+          set -euo pipefail
+          out="android/app/build/outputs/apk/release"
           aapt_bin="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)"
           test -x "$aapt_bin"
-          "$aapt_bin" dump badging "$apk" > "$RUNNER_TEMP/encma-apk-badging.txt"
-          grep -F "package: name='com.encma.hxmain'" "$RUNNER_TEMP/encma-apk-badging.txt"
-          # Application identity (Settings/app info) is permanently the
-          # Calculator disguise; the launcher entry keeps the ENCMA label.
-          grep -F "application: label='Calculator'" "$RUNNER_TEMP/encma-apk-badging.txt"
-          grep "launchable-activity: name='com.mattermost.rnbeta.MainActivity'" "$RUNNER_TEMP/encma-apk-badging.txt" | grep -F "label='ENCMA'"
-          ls -lh "$apk"
-          sha256sum "$apk"
 
-      - name: Upload installable arm64 APK
+          # Checks one APK for the ENCMA package identity, the Android 8.0
+          # (API 26) minimum, the permanent Calculator application identity,
+          # the ENCMA launcher label and the expected native ABIs.
+          verify_apk() {
+            local apk="$1"
+            shift
+            test -s "$apk"
+            "$aapt_bin" dump badging "$apk" > "$RUNNER_TEMP/badging.txt"
+            grep -F "package: name='com.encma.hxmain'" "$RUNNER_TEMP/badging.txt"
+            grep -F "sdkVersion:'26'" "$RUNNER_TEMP/badging.txt"
+            grep -F "application: label='Calculator'" "$RUNNER_TEMP/badging.txt"
+            grep "launchable-activity: name='com.mattermost.rnbeta.MainActivity'" "$RUNNER_TEMP/badging.txt" | grep -F "label='ENCMA'"
+            local native_code
+            native_code="$(grep "^native-code:" "$RUNNER_TEMP/badging.txt")"
+            echo "$apk -> $native_code"
+            local abi
+            for abi in "$@"; do
+              grep -Fq "'$abi'" <<< "$native_code"
+              # Guard against an effectively empty ABI (missing prebuilt libs).
+              test "$(unzip -l "$apk" | grep -c "lib/$abi/.*\.so$")" -ge 4
+            done
+            # A per-ABI split must not bundle the other phone ABI as well.
+            if [ "$#" -eq 1 ]; then
+              local other="armeabi-v7a"
+              if [ "$1" = "armeabi-v7a" ]; then other="arm64-v8a"; fi
+              if grep -Fq "'$other'" <<< "$native_code"; then
+                echo "::error::$apk unexpectedly contains $other native code"
+                exit 1
+              fi
+            fi
+            ls -lh "$apk"
+            sha256sum "$apk"
+          }
+
+          verify_apk "$out/app-arm64-v8a-release.apk" arm64-v8a
+          verify_apk "$out/app-armeabi-v7a-release.apk" armeabi-v7a
+          verify_apk "$out/app-universal-release.apk" arm64-v8a armeabi-v7a
+
+      - name: Verify WireGuard native libraries for both phone ABIs
+        run: |
+          set -euo pipefail
+          out="android/app/build/outputs/apk/release"
+          unzip -l "$out/app-arm64-v8a-release.apk" | grep -E "lib/arm64-v8a/libwg.*\.so$"
+          unzip -l "$out/app-armeabi-v7a-release.apk" | grep -E "lib/armeabi-v7a/libwg.*\.so$"
+          unzip -l "$out/app-universal-release.apk" | grep -E "lib/armeabi-v7a/libwg.*\.so$"
+
+      - name: Upload installable APKs (arm64, arm32, universal)
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: encma-wireguard-arm64-release-server-ca-import
-          path: android/app/build/outputs/apk/release/app-release.apk
+          name: encma-wireguard-release-server-ca-import
+          path: |
+            android/app/build/outputs/apk/release/app-arm64-v8a-release.apk
+            android/app/build/outputs/apk/release/app-armeabi-v7a-release.apk
+            android/app/build/outputs/apk/release/app-universal-release.apk
           if-no-files-found: error
           retention-days: 30
