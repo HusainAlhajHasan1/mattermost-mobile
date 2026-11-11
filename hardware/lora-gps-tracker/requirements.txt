@@ -1,0 +1,5 @@
+# pcbgen toolchain dependencies (pure Python, no KiCad required)
+numpy>=1.24
+scipy>=1.10
+shapely>=2.0
+matplotlib>=3.7

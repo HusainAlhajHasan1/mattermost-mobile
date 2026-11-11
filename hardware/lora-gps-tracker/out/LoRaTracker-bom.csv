@@ -1,0 +1,28 @@
+Reference,Value,Footprint,Pads,Side
+BAT1,CR1220 holder,CR1220 holder,2,bottom
+C1,10uF/16V,10uF/16V,2,top
+C2,100nF/50V,100nF/50V,2,top
+C3,100nF/50V,100nF/50V,2,top
+C4,10uF/16V,10uF/16V,2,top
+C5,100nF/50V,100nF/50V,2,top
+C6,100nF/50V,100nF/50V,2,top
+J1,microSD TF-01A,microSD TF-01A,13,top
+J2,Conn_GPS_1x04,Conn_GPS_1x04,4,top
+J3,Conn_UART_1x05,Conn_UART_1x05,5,top
+J4,Conn_PWR_1x02,Conn_PWR_1x02,2,top
+Q1,AO3401A,AO3401A,3,top
+R1,10k,10k,2,top
+R2,10k,10k,2,top
+R3,10k,10k,2,top
+R4,10k,10k,2,top
+R5,10k,10k,2,top
+R6,100R,100R,2,top
+R7,10k,10k,2,top
+R8,10k,10k,2,top
+R9,10k,10k,2,top
+R10,10k,10k,2,top
+SW1,SW-420,SW-420,2,top
+SW2,SW_Reset,SW_Reset,2,top
+U1,ESP32-WROOM-32E,ESP32-WROOM-32E,47,top
+U2,Ra-02 SX1278,Ra-02 SX1278,16,top
+U3,DS3231MZ,DS3231MZ,8,top

@@ -1,0 +1,17 @@
+DESIGN RULE CHECK REPORT - ultra-low-power LoRa/GPS tracker rev 1.0
+==============================================================================
+
+Design rules : clearance 0.2 mm, edge clearance 0.3 mm,
+               min track 0.2 mm, min drill 0.3 mm, annular ring 0.15 mm,
+               hole-to-hole 0.3 mm
+
+Copper items checked : 691
+Track segments       : 288
+Vias                 : 237 (197 GND stitching vias)
+
+ERRORS   : 0
+
+WARNINGS : 0
+
+RESULT: PASS - every net fully connected, all clearances met,
+        antennas keep-out clear on both layers.

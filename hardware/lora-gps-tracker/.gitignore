@@ -1,0 +1,15 @@
+# generated artefacts - rebuild with `python build.py`
+out/*
+!out/.gitkeep
+
+# the fabrication package IS the deliverable, so it is committed explicitly
+!out/LoRaTracker_Gerbers.zip
+!out/LoRaTracker.kicad_pcb
+!out/LoRaTracker-drc-report.txt
+!out/LoRaTracker-preview.png
+!out/LoRaTracker-bom.csv
+!out/LoRaTracker-pos.csv
+
+__pycache__/
+*.pyc
+.venv/
