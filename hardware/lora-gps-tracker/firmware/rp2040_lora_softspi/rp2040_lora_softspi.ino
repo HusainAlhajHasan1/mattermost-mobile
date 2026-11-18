@@ -376,57 +376,101 @@ void setup() {
     Serial.print(F("radio ready on "));
     Serial.print((uint32_t)(FREQ_HZ / 1000));
     Serial.println(F(" kHz, listening"));
+    Serial.println(F("type t + Enter (or just t) to send a test packet"));
     help();
 
     radioStartRx();
 }
 
+/* Runs one command line. Tolerant of what phone terminal apps actually send. */
+static void runCommand(char *line) {
+    /* strip leading whitespace */
+    while (*line == ' ' || *line == '\t') line++;
+    /* strip trailing whitespace incl. a stray \r */
+    size_t len = strlen(line);
+    while (len > 0 && (line[len - 1] == ' ' || line[len - 1] == '\t' ||
+                       line[len - 1] == '\r' || line[len - 1] == '\n')) {
+        line[--len] = '\0';
+    }
+    if (len == 0) return;
+
+    /* phones auto-capitalise the first letter: "T" must work like "t" */
+    char op = line[0];
+    if (op >= 'A' && op <= 'Z') op = (char)(op - 'A' + 'a');
+
+    switch (op) {
+        case 'r': appMode = MODE_RX;   radioStartRx();
+                  Serial.println(F("[mode] receive")); break;
+        case 't': beacon(); lastBeacon = millis(); break;
+        case 'a': appMode = MODE_AUTO; lastBeacon = millis() - BEACON_INTERVAL_MS;
+                  Serial.println(F("[mode] auto-beacon")); break;
+        case 's': appMode = MODE_IDLE; radioStandby();
+                  Serial.println(F("[mode] idle")); break;
+        case 'i': printStatus(); break;
+        case 'h': help(); break;
+        case 'm': {
+            const char *msg = line + 1;
+            while (*msg == ' ' || *msg == ':') msg++;
+            size_t mlen = strlen(msg);
+            if (mlen == 0) { Serial.println(F("usage: m<text>")); break; }
+            if (mlen > MAX_PAYLOAD) mlen = MAX_PAYLOAD;
+            if (radioSend((const uint8_t *)msg, (uint8_t)mlen)) {
+                txCount++;
+                Serial.print(F("[tx] ")); Serial.println(msg);
+            } else {
+                Serial.println(F("[tx] failed"));
+            }
+            if (appMode != MODE_IDLE) radioStartRx();
+            break;
+        }
+        default:
+            Serial.print(F("unknown command: "));
+            Serial.println(line);
+            help();
+            break;
+    }
+}
+
 void loop() {
-    /* ---------------------------------------------------- serial commands */
-    static char cmdBuf[80];
-    static uint8_t cmdLen = 0;
+    /* ---------------------------------------------------- serial commands
+     *
+     * Phone serial apps are inconsistent about line endings:
+     *   "t\r\n"  normal   "t\r"  old-Mac style   "t"  no terminator at all
+     * Some send nothing until another key is pressed. So: buffer printable
+     * characters and fire the command on EITHER \r or \n (first one wins,
+     * the second is swallowed because the buffer is already empty), or
+     * after COMMIT_MS of silence which handles the no-terminator case. */
+    static char     cmdBuf[80];
+    static uint8_t  cmdLen = 0;
+    static uint32_t lastCharMs = 0;
+    const  uint32_t COMMIT_MS = 250;      // silence that counts as "line finished"
 
     while (Serial.available()) {
         char c = (char)Serial.read();
-        if (c == '\r') continue;
-        if (c == '\n') {
+        lastCharMs = millis();
+
+        if (c == '\r' || c == '\n') {
             cmdBuf[cmdLen] = '\0';
-            if (cmdLen > 0) {
-                char op = cmdBuf[0];
-                switch (op) {
-                    case 'r': appMode = MODE_RX;   radioStartRx();
-                              Serial.println(F("[mode] receive")); break;
-                    case 't': beacon(); lastBeacon = millis(); break;
-                    case 'a': appMode = MODE_AUTO; lastBeacon = millis() - BEACON_INTERVAL_MS;
-                              Serial.println(F("[mode] auto-beacon")); break;
-                    case 's': appMode = MODE_IDLE; radioStandby();
-                              Serial.println(F("[mode] idle")); break;
-                    case 'i': printStatus(); break;
-                    case 'h': help(); break;
-                    case 'm': {
-                        const char *msg = cmdBuf + 1;
-                        while (*msg == ' ') msg++;
-                        size_t len = strlen(msg);
-                        if (len == 0) { Serial.println(F("usage: m<text>")); break; }
-                        if (len > MAX_PAYLOAD) len = MAX_PAYLOAD;
-                        if (radioSend((const uint8_t *)msg, (uint8_t)len)) {
-                            txCount++;
-                            Serial.print(F("[tx] ")); Serial.println(msg);
-                        } else {
-                            Serial.println(F("[tx] failed"));
-                        }
-                        if (appMode != MODE_IDLE) radioStartRx();
-                        break;
-                    }
-                    default:
-                        Serial.println(F("unknown command - h for help"));
-                        break;
-                }
-            }
+            runCommand(cmdBuf);
             cmdLen = 0;
-        } else if (cmdLen < sizeof(cmdBuf) - 1) {
-            cmdBuf[cmdLen++] = c;
+        } else if (c == 8 || c == 127) {  // backspace / delete
+            if (cmdLen > 0) cmdLen--;
+        } else if (c >= 32 && c <= 126) { // printable only, ignore control junk
+            if (cmdLen < sizeof(cmdBuf) - 1) {
+                cmdBuf[cmdLen++] = c;
+            } else {                      // buffer full: run what we have
+                cmdBuf[cmdLen] = '\0';
+                runCommand(cmdBuf);
+                cmdLen = 0;
+            }
         }
+    }
+
+    /* no line terminator arrived - commit on silence */
+    if (cmdLen > 0 && (millis() - lastCharMs) > COMMIT_MS) {
+        cmdBuf[cmdLen] = '\0';
+        runCommand(cmdBuf);
+        cmdLen = 0;
     }
 
     /* ------------------------------------------------------ auto beaconing */
