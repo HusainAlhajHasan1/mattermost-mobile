@@ -112,6 +112,8 @@ static uint8_t spiRead(uint8_t addr) {
 #define REG_PA_RAMP              0x0A
 #define REG_OCP                  0x0B
 #define REG_LNA                  0x0C
+#define REG_RSSI_CONFIG          0x0E   // alias: FIFO_TX_BASE in normal mode
+#define REG_RSSI_VALUE           0x11
 #define REG_FIFO_ADDR_PTR        0x0D
 #define REG_FIFO_TX_BASE         0x0E
 #define REG_FIFO_RX_BASE         0x0F
@@ -387,9 +389,65 @@ static void radioDump() {
     Serial.println(F("-----------------------"));
 }
 
+/* ---------------------------------------------------------------------------
+ * 'n' - live noise-floor monitor. Puts the radio in continuous RX-RSSI mode
+ * (datasheet 6.4) and prints the raw RSSI register so you can watch the RF
+ * floor move. This needs NO packets and NO matching settings on the other
+ * board: if the antenna and front end are alive, the number changes when you
+ * bring a transmitter near. Press any key to stop.
+ * ------------------------------------------------------------------------- */
+static void rssiMonitor() {
+    const uint32_t WINDOW_MS = 12000;
+
+    radioStandby();
+    spiWrite(REG_OP_MODE, MODE_LONG_RANGE | MODE_SLEEP);
+    delay(5);
+    /* RxRssiContinuous: low 3 bits = 101, keep LoRa bit */
+    spiWrite(REG_OP_MODE, MODE_LONG_RANGE | 0x05);
+    /* writes to 0x0E go to RSSI_CONFIG while in this mode */
+    spiWrite(REG_RSSI_CONFIG, 0x01);
+
+    Serial.println(F("[scan] continuous RSSI for 12 s - any key stops it"));
+    Serial.println(F("       strong signal = -30..-70 dBm | empty band = -100..-125"));
+
+    int16_t best = -200, worst = 0;
+    uint32_t t0 = millis();
+    while (millis() - t0 < WINDOW_MS) {
+        if (Serial.available()) { while (Serial.available()) Serial.read(); break; }
+
+        uint8_t raw = spiRead(REG_RSSI_VALUE);
+        int16_t dbm = (int16_t)RSSI_OFFSET + raw;
+        if (dbm < worst) worst = dbm;
+        if (dbm > best)  best  = dbm;
+
+        Serial.print(F("  rssi="));
+        Serial.print(dbm);
+        Serial.print(F(" dBm  "));
+        int bars = (dbm + 130) / 3;          // -130..-100 -> 0..10 bars
+        for (int i = 0; i < 10; i++) Serial.print(i < bars ? '#' : '.');
+        Serial.println();
+        delay(200);
+    }
+
+    Serial.print(F("[scan] best="));
+    Serial.print(best);
+    Serial.print(F(" dBm  worst="));
+    Serial.print(worst);
+    Serial.println(F(" dBm"));
+    if (best > -85) {
+        Serial.println(F("[scan] RF front end is ALIVE (signal detected)"));
+    } else {
+        Serial.println(F("[scan] flat noise floor - check antenna and that the"));
+        Serial.println(F("       other board is actually transmitting"));
+    }
+
+    radioStartRx();
+    Serial.println(F("[scan] back to receive"));
+}
+
 static void help() {
     Serial.println(F("commands: r=receive  t=test-tx  a=auto-beacon  s=stop  "
-                     "m<text>=send  i=status  d=radio-dump  h=help"));
+                     "m<text>=send  i=status  d=radio-dump  n=rf-scan  h=help"));
 }
 
 static void beacon() {
@@ -458,6 +516,7 @@ static void runCommand(char *line) {
                   Serial.println(F("[mode] idle")); break;
         case 'i': printStatus(); break;
         case 'd': radioDump(); break;
+        case 'n': rssiMonitor(); break;
         case 'h': help(); break;
         case 'm': {
             const char *msg = line + 1;
