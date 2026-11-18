@@ -28,6 +28,7 @@
 
 #include <Arduino.h>
 #include <string.h>
+#include <stdio.h>
 #include <hardware/adc.h>
 #include <hardware/gpio.h>
 #include <hardware/pwm.h>
@@ -611,10 +612,23 @@ static void testModemSelfCheck() {
 
 /* ============================== REPORT =================================== */
 
+static char verdictLine[64] = "no results yet";
+static bool spiLoopRan = false;
+
+static void buildVerdict() {
+    snprintf(verdictLine, sizeof(verdictLine), "%u passed / %u failed%s",
+             passCount, failCount, failIdx ? "" : " - NO FAULTS");
+    spiLoopRan = false;   /* set by caller via finalReport arg */
+}
+
 static void finalReport(bool spiLoopOk) {
     head("REPORT");
     Serial.print(F("  checks passed : ")); Serial.println(passCount);
     Serial.print(F("  checks failed : ")); Serial.println(failCount);
+
+    snprintf(verdictLine, sizeof(verdictLine), "%u passed / %u failed%s",
+             passCount, failCount, failIdx ? "" : " - NO FAULTS");
+    spiLoopRan = spiLoopOk;
 
     if (failIdx == 0) {
         Serial.println(F("  VERDICT: no faults found on this board."));
@@ -696,17 +710,44 @@ void setup() {
 }
 
 void loop() {
-    /* Single-shot test. The heartbeat proves the sketch is still alive, so a
-     * silent serial line can be told apart from a board that reset or hung. */
+    /* Single-shot test, but fully re-queryable:
+     *   any key  -> reprint the whole report (the log scrolls away otherwise)
+     *   heartbeat -> compact verdict so the summary is never lost off-screen  */
     static uint32_t ticks = 0;
+
+    if (Serial.available()) {
+        while (Serial.available()) Serial.read();
+        Serial.println();
+        Serial.println(F("############ REPORT AGAIN ############"));
+        Serial.print(F("  "));
+        Serial.println(verdictLine);
+        if (failIdx) {
+            Serial.println(F("  FAILED ITEMS:"));
+            for (uint8_t i = 0; i < failIdx; i++) {
+                Serial.print(F("    - "));
+                Serial.println(failList[i]);
+            }
+        } else {
+            Serial.println(F("  no faults found on this board"));
+        }
+        if (!spiLoopRan) {
+            Serial.println(F("  (SPI loopback not verified - fit a wire GP2->GP3)"));
+        }
+        Serial.println(F("######################################"));
+        Serial.flush();
+    }
+
     digitalWrite(LED_BUILTIN, HIGH);
-    delay(700);
+    delay(650);
     digitalWrite(LED_BUILTIN, LOW);
-    delay(700);
+    delay(650);
     ticks++;
-    if ((ticks % 5) == 0) {
-        Serial.print(F("[alive] test finished, heartbeat #"));
-        Serial.println(ticks);
+
+    if ((ticks % 4) == 0) {
+        Serial.print(F("[alive "));
+        Serial.print(ticks);
+        Serial.print(F("] "));
+        Serial.println(verdictLine);
         Serial.flush();
     }
 }
