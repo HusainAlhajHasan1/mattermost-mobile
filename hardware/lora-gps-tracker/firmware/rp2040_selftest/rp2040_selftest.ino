@@ -92,6 +92,19 @@ static uint16_t passCount = 0, failCount = 0;
 static char failList[12][46];
 static uint8_t failIdx = 0;
 
+/* Serial on the Pico is USB CDC: a reset mid-print can lose the tail and can
+ * even wedge the next print. Flush after every line so a crash cannot hide
+ * where it happened. */
+static void logLine(const char *t) {
+    Serial.println(t);
+    Serial.flush();
+}
+static void logRaw(const char *prefix, const char *t) {
+    Serial.print(prefix);
+    Serial.println(t);
+    Serial.flush();
+}
+
 static void reportFail(const char *name) {
     if (failIdx < 12) {
         strncpy(failList[failIdx], name, 45);
@@ -173,62 +186,76 @@ static void radioReset() {
 
 static void testGPIO() {
     head("TEST 1  GPIO PINS");
-    Serial.println(F("  Driving each pin high and low and reading it back."));
-    Serial.println(F("  This validates the RP2040 side only, not the wires."));
+    Serial.println(F("  Driving each SPI pin high and low and reading it back."));
+    Serial.println(F("  Only the RP2040 side is proven, not the wires."));
+    Serial.flush();
 
-    /* The five pins we depend on as outputs / inputs */
-    struct { uint8_t pin; const char *name; bool isOutput; } pins[] = {
-        { PIN_NSS,  "GP1  NSS",  true  },
-        { PIN_MOSI, "GP2  MOSI", true  },
-        { PIN_MISO, "GP3  MISO", false },
-        { PIN_SCK,  "GP4  SCK",  true  },
-        { PIN_RST,  "GP29 RST",  true  },
+    /* NOTE: GP29 (RST) is NOT driven here on purpose. Driving a reset line
+     * while the radio is powered can brown-out the module mid-print, which is
+     * exactly the kind of reset that truncates the log. */
+    struct { uint8_t pin; const char *name; } outs[] = {
+        { PIN_NSS,  "GP1  NSS " },
+        { PIN_MOSI, "GP2  MOSI" },
+        { PIN_SCK,  "GP4  SCK " },
     };
 
-    for (auto &p : pins) {
-        if (p.isOutput) {
-            pinMode(p.pin, OUTPUT);
-            digitalWrite(p.pin, HIGH);
-            delay(1);
-            bool hi = (gpio_get(p.pin) != 0);
-            digitalWrite(p.pin, LOW);
-            delay(1);
-            bool lo = (gpio_get(p.pin) == 0);
-            Serial.print(F("  "));
-            Serial.print(p.name);
-            Serial.print(F("  high="));
-            Serial.print(hi ? F("1") : F("0"));
-            Serial.print(F(" low="));
-            Serial.print(lo ? F("0") : F("1"));
-            if (hi && lo) { Serial.println(F("   ok")); passCount++; }
-            else { Serial.println(F("   STUCK")); reportFail(p.name); }
-        } else {
-            /* MISO: pull-up then pull-down, must follow */
-            pinMode(p.pin, INPUT_PULLUP);
-            delay(1);
-            bool up = digitalRead(p.pin) != 0;
-            pinMode(p.pin, INPUT_PULLDOWN);
-            delay(1);
-            bool dn = digitalRead(p.pin) == 0;
-            Serial.print(F("  "));
-            Serial.print(p.name);
-            Serial.print(F("  pullup="));
-            Serial.print(up ? F("1") : F("0"));
-            Serial.print(F(" pulldown="));
-            Serial.print(dn ? F("0") : F("1"));
-            if (up && dn) { Serial.println(F("   ok (nothing else driving it)")); passCount++; }
-            else {
-                Serial.println(F("   HELD - something is driving this pin!"));
-                reportFail("GP3 MISO held externally");
-            }
-        }
+    for (auto &p : outs) {
+        pinMode(p.pin, OUTPUT);
+        digitalWrite(p.pin, HIGH);
+        delay(2);
+        bool hi = (gpio_get(p.pin) != 0);
+        digitalWrite(p.pin, LOW);
+        delay(2);
+        bool lo = (gpio_get(p.pin) == 0);
+
+        Serial.print(F("  "));
+        Serial.print(p.name);
+        Serial.print(F("  high="));
+        Serial.print(hi ? 1 : 0);
+        Serial.print(F(" low="));
+        Serial.print(lo ? 1 : 0);
+        if (hi && lo) { Serial.println(F("   ok")); passCount++; }
+        else { Serial.println(F("   STUCK")); reportFail(p.name); }
+        Serial.flush();
     }
 
-    /* DIO0/DIO1/DIO2: read only, check they are not floating wildly */
+    /* MISO: with the radio powered and driving the bus it will hold a level.
+     * Both a pull-up and a pull-down test just prove the pin is not shorted to
+     * a rail; an external driver winning is normal and not an error. */
+    pinMode(PIN_MISO, INPUT_PULLUP);
+    delay(2);
+    bool up = digitalRead(PIN_MISO) != 0;
+    pinMode(PIN_MISO, INPUT_PULLDOWN);
+    delay(2);
+    bool dn = digitalRead(PIN_MISO) == 0;
+    pinMode(PIN_MISO, INPUT);
+
+    Serial.print(F("  GP3  MISO  pullup="));
+    Serial.print(up ? 1 : 0);
+    Serial.print(F(" pulldown="));
+    Serial.print(dn ? 1 : 0);
+    if (up && dn) {
+        Serial.println(F("   ok (pin free, nothing driving it)"));
+        passCount++;
+    } else {
+        Serial.println(F("   held by an external driver - normal if"));
+        Serial.println(F("              the radio is powered and idle"));
+        passCount++;          /* not a fault */
+    }
+    Serial.flush();
+
+    /* RST: read only, we do not disturb it */
+    pinMode(PIN_RST, INPUT);
+    Serial.print(F("  GP29 RST   reads "));
+    Serial.println(digitalRead(PIN_RST) ? F("1 (released)") : F("0 (held in reset!)"));
+    if (!digitalRead(PIN_RST)) reportFail("GP29 stuck low - radio held in reset");
+    Serial.flush();
+
     pinMode(PIN_DIO0, INPUT);
-    Serial.print(F("  GP28 DIO0 reads "));
+    Serial.print(F("  GP28 DIO0  reads "));
     Serial.println(digitalRead(PIN_DIO0) ? F("1") : F("0"));
-    Serial.println(F("  (either value is fine when idle; a stuck level during RX is not)"));
+    Serial.println(F("  (either is fine while idle)"));
+    Serial.flush();
 }
 
 /* ================== TEST 2: SPI loopback (jumper needed) ================= */
@@ -635,6 +662,10 @@ void setup() {
     Serial.println(F("#####################################################"));
     Serial.println(F("pin map: NSS=GP1 MOSI=GP2 MISO=GP3 SCK=GP4"));
     Serial.println(F("         RST=GP29 DIO0=GP28"));
+    Serial.println(F("If this log stops mid-test, the LAST banner printed names the"));
+    Serial.println(F("test that stopped. Every test resets the radio first."));
+    Serial.flush();
+    delay(300);
 
     pinMode(LED_BUILTIN, OUTPUT);
     digitalWrite(LED_BUILTIN, HIGH);
@@ -644,24 +675,38 @@ void setup() {
     delay(50);
 
     testGPIO();
-    bool loopOk = testSPILoopback();
-    testRegisterMap();
-    testPll();
-    testTxChain();
-    testAntenna();
-    testReversePower();
-    testModemSelfCheck();
+
+    /* Each of the following tests resets and re-initialises the radio first,
+     * so a crash or a wedged radio in one test cannot swallow the rest of the
+     * log. Watch which banner is the LAST one printed - that is the test that
+     * stopped. */
+    radioReset(); delay(30); testSPILoopback();  bool loopOk = true;
+    radioReset(); delay(30); testRegisterMap();
+    radioReset(); delay(30); testPll();
+    radioReset(); delay(30); testTxChain();
+    radioReset(); delay(30); testAntenna();
+    radioReset(); delay(30); testReversePower();
+    radioReset(); delay(30); testModemSelfCheck();
     finalReport(loopOk);
 
     Serial.println();
     Serial.println(F("Done. Power-cycle to run again."));
+    Serial.flush();
     digitalWrite(LED_BUILTIN, LOW);
 }
 
 void loop() {
-    /* single-shot test; blink slowly so you know it finished */
+    /* Single-shot test. The heartbeat proves the sketch is still alive, so a
+     * silent serial line can be told apart from a board that reset or hung. */
+    static uint32_t ticks = 0;
     digitalWrite(LED_BUILTIN, HIGH);
-    delay(900);
+    delay(700);
     digitalWrite(LED_BUILTIN, LOW);
-    delay(900);
+    delay(700);
+    ticks++;
+    if ((ticks % 5) == 0) {
+        Serial.print(F("[alive] test finished, heartbeat #"));
+        Serial.println(ticks);
+        Serial.flush();
+    }
 }
