@@ -337,9 +337,59 @@ static void printStatus() {
     Serial.println(F("dB"));
 }
 
+/* 'd' - dump the registers we care about and do a loopback-free sanity report.
+ * This is the fastest way to tell "radio is fine, antenna/reception is not"
+ * apart from "radio never configured". */
+static void radioDump() {
+    radioStandby();
+    uint8_t mode  = spiRead(REG_OP_MODE);
+    uint8_t fr1   = spiRead(REG_MODEM_CONFIG_1);
+    uint8_t fr2   = spiRead(REG_MODEM_CONFIG_2);
+    uint8_t pa    = spiRead(REG_PA_CONFIG);
+    uint8_t lna   = spiRead(REG_LNA);
+    uint8_t sync  = spiRead(REG_SYNC_WORD);
+    uint8_t plen  = spiRead(REG_PAYLOAD_LENGTH);
+
+    Serial.println(F("--- radio registers ---"));
+    Serial.print(F("  Version(0x42)   = 0x")); Serial.println(spiRead(REG_VERSION), HEX);
+    Serial.print(F("  OpMode (0x01)   = 0x")); Serial.println(mode, HEX);
+    Serial.print(F("    LoRa mode     : ")); Serial.println((mode & 0x80) ? F("yes") : F("NO <-- problem"));
+    Serial.print(F("    modem state   : 0x")); Serial.println((mode & 0x07), HEX);
+    Serial.print(F("  ModemCfg1(0x1D) = 0x")); Serial.println(fr1, HEX);
+    Serial.print(F("    bandwidth     : "));
+    switch ((fr1 >> 4) & 0x0F) {
+        case 7:  Serial.println(F("125 kHz")); break;
+        case 8:  Serial.println(F("250 kHz")); break;
+        case 9:  Serial.println(F("500 kHz")); break;
+        default: Serial.print(F("0x")); Serial.println((fr1 >> 4) & 0x0F, HEX); break;
+    }
+    Serial.print(F("    coding rate   : 4/")); Serial.println(5 + ((fr1 >> 1) & 0x07));
+    Serial.print(F("  ModemCfg2(0x1E) = 0x")); Serial.println(fr2, HEX);
+    Serial.print(F("    spreading     : SF")); Serial.println((fr2 >> 4) & 0x0F);
+    Serial.print(F("    CRC           : ")); Serial.println((fr2 & 0x04) ? F("on") : F("OFF <-- problem"));
+    Serial.print(F("  PaConfig(0x09)  = 0x")); Serial.println(pa, HEX);
+    Serial.print(F("  Lna(0x0C)       = 0x")); Serial.println(lna, HEX);
+    Serial.print(F("  SyncWord(0x39)  = 0x")); Serial.println(sync, HEX);
+    Serial.print(F("  PayloadLen(0x22)= ")); Serial.println(plen);
+    Serial.print(F("  Freq (0x06..08) = "));
+    /* read back the frequency word we programmed */
+    uint32_t msb = spiRead(REG_FR_MSB), mid = spiRead(REG_FR_MID), lsb = spiRead(REG_FR_LSB);
+    uint32_t frf = (msb << 16) | (mid << 8) | lsb;
+    Serial.print((uint32_t)(((uint64_t)frf * 32000000ULL) / (1ULL << 19)));
+    Serial.println(F(" Hz"));
+    Serial.println(F("  RSSI / SNR only update after a packet is received."));
+
+    /* An RF level that is stuck at 0x00 or 0xFF usually means the antenna port
+     * is open or shorted; a live floor moves with the environment. */
+    uint8_t rf = spiRead(REG_PKT_RSSI);
+    Serial.print(F("  PacketRssi(0x1A)= 0x")); Serial.print(rf, HEX);
+    Serial.print(F("  -> ")); Serial.print((int)RSSI_OFFSET + rf); Serial.println(F(" dBm if a packet arrived"));
+    Serial.println(F("-----------------------"));
+}
+
 static void help() {
     Serial.println(F("commands: r=receive  t=test-tx  a=auto-beacon  s=stop  "
-                     "m<text>=send  i=status  h=help"));
+                     "m<text>=send  i=status  d=radio-dump  h=help"));
 }
 
 static void beacon() {
@@ -407,6 +457,7 @@ static void runCommand(char *line) {
         case 's': appMode = MODE_IDLE; radioStandby();
                   Serial.println(F("[mode] idle")); break;
         case 'i': printStatus(); break;
+        case 'd': radioDump(); break;
         case 'h': help(); break;
         case 'm': {
             const char *msg = line + 1;
