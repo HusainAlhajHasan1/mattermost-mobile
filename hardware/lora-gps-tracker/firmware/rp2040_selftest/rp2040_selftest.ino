@@ -90,6 +90,37 @@
 /* ============================== bookkeeping ============================== */
 
 static uint16_t passCount = 0, failCount = 0;
+static uint16_t lastFailSnapshot = 0;
+static char headTag[18] = "T0";
+
+/* Every check appends one short row to a table. The table is printed inline as
+ * it runs AND again at the end under a short tag, so even a one-screen phone
+ * terminal shows the whole result:  T1 ok | T2 ok | T3 FAIL(1) | ...
+ */
+struct CheckRow { char tag[18]; bool ok; uint8_t fails; };
+static CheckRow rows[14];
+static uint8_t rowCount = 0;
+
+static void addRow(const char *tag, bool ok, uint8_t fails) {
+    if (rowCount >= 14) return;
+    strncpy(rows[rowCount].tag, tag, 17);
+    rows[rowCount].tag[17] = '\0';
+    rows[rowCount].ok = ok;
+    rows[rowCount].fails = fails;
+    rowCount++;
+}
+
+static void inlineResult() {
+    uint8_t f = failCount - lastFailSnapshot;
+    lastFailSnapshot = failCount;
+    Serial.print(F("  >> "));
+    Serial.print(headTag);
+    Serial.print(F("  "));
+    if (f == 0) Serial.println(F("OK"));
+    else { Serial.print(F("FAIL (")); Serial.print(f); Serial.println(F(")")); }
+    Serial.flush();
+    addRow(headTag, f == 0, f);
+}
 static char failList[12][46];
 static uint8_t failIdx = 0;
 
@@ -124,10 +155,18 @@ static void reportPass(const char *what) {
 }
 
 static void head(const char *t) {
+    /* second word after "TEST n" is the tag, e.g. "TEST 3  SX1278 ..." */
+    snprintf(headTag, sizeof(headTag), "%s", t);
+    /* shorten to "Tn" for the summary row */
+    if (t[0] == 'T' && t[5] >= '0' && t[5] <= '9') {
+        headTag[0] = 'T';
+        headTag[1] = t[5];
+        headTag[2] = '\0';
+    }
     Serial.println();
-    Serial.println(F("====================================================="));
+    Serial.print(F("=== "));
     Serial.println(t);
-    Serial.println(F("====================================================="));
+    Serial.flush();
 }
 
 /* ========================= bit-banged SPI, mode 0 ======================== */
@@ -623,6 +662,18 @@ static void buildVerdict() {
 
 static void finalReport(bool spiLoopOk) {
     head("REPORT");
+
+    /* compact matrix first - fits one phone screen */
+    Serial.print(F("  "));
+    for (uint8_t i = 0; i < rowCount; i++) {
+        Serial.print(rows[i].tag);
+        Serial.print(' ');
+        if (rows[i].ok) Serial.print(F("ok"));
+        else { Serial.print(F("F")); Serial.print(rows[i].fails); }
+        if (i + 1 < rowCount) Serial.print(F(" | "));
+    }
+    Serial.println();
+    Serial.flush();
     Serial.print(F("  checks passed : ")); Serial.println(passCount);
     Serial.print(F("  checks failed : ")); Serial.println(failCount);
 
@@ -649,17 +700,7 @@ static void finalReport(bool spiLoopOk) {
     }
 
     Serial.println();
-    Serial.println(F("  WHAT THIS CANNOT PROVE:"));
-    Serial.println(F("    Receiving a packet needs a SECOND transmitter. If the"));
-    Serial.println(F("    noise floor is live and PLL locks, your board is good"));
-    Serial.println(F("    and any remaining silence is a peer/settings issue."));
-    Serial.println();
-    Serial.println(F("  IMPORTANT: a 50 ohm resistor is a dummy load, not an"));
-    Serial.println(F("  antenna. It absorbs TX power and cannot radiate or"));
-    Serial.println(F("  receive. Use a real 433 MHz antenna (quarter-wave"));
-    Serial.println(F("  whip = 16.5 cm) for any range test."));
-    Serial.println();
-    Serial.println(F("  Send this whole log back for interpretation."));
+    Serial.println(F("  NOTE: reception needs a 2nd transmitter."));
 }
 
 /* =============================== MAIN =================================== */
@@ -688,19 +729,18 @@ void setup() {
     radioReset();
     delay(50);
 
-    testGPIO();
+    testGPIO();            inlineResult();
 
-    /* Each of the following tests resets and re-initialises the radio first,
-     * so a crash or a wedged radio in one test cannot swallow the rest of the
-     * log. Watch which banner is the LAST one printed - that is the test that
-     * stopped. */
-    radioReset(); delay(30); testSPILoopback();  bool loopOk = true;
-    radioReset(); delay(30); testRegisterMap();
-    radioReset(); delay(30); testPll();
-    radioReset(); delay(30); testTxChain();
-    radioReset(); delay(30); testAntenna();
-    radioReset(); delay(30); testReversePower();
-    radioReset(); delay(30); testModemSelfCheck();
+    /* Each test resets the radio first, so a crash or a wedged radio in one
+     * test cannot swallow the rest of the log. Watch which banner is the LAST
+     * one printed - that is the test that stopped. */
+    radioReset(); delay(30); testSPILoopback();  inlineResult(); bool loopOk = true;
+    radioReset(); delay(30); testRegisterMap();  inlineResult();
+    radioReset(); delay(30); testPll();          inlineResult();
+    radioReset(); delay(30); testTxChain();      inlineResult();
+    radioReset(); delay(30); testAntenna();      inlineResult();
+    radioReset(); delay(30); testReversePower(); inlineResult();
+    radioReset(); delay(30); testModemSelfCheck(); inlineResult();
     finalReport(loopOk);
 
     Serial.println();
@@ -719,6 +759,15 @@ void loop() {
         while (Serial.available()) Serial.read();
         Serial.println();
         Serial.println(F("############ REPORT AGAIN ############"));
+        Serial.print(F("  "));
+        for (uint8_t i = 0; i < rowCount; i++) {
+            Serial.print(rows[i].tag);
+            Serial.print(' ');
+            if (rows[i].ok) Serial.print(F("ok"));
+            else { Serial.print(F("F")); Serial.print(rows[i].fails); }
+            if (i + 1 < rowCount) Serial.print(F(" | "));
+        }
+        Serial.println();
         Serial.print(F("  "));
         Serial.println(verdictLine);
         if (failIdx) {
@@ -747,7 +796,11 @@ void loop() {
         Serial.print(F("[alive "));
         Serial.print(ticks);
         Serial.print(F("] "));
-        Serial.println(verdictLine);
+        for (uint8_t i = 0; i < rowCount; i++) {
+            Serial.print(rows[i].tag);
+            Serial.print(rows[i].ok ? F(":ok ") : F(":FAIL "));
+        }
+        Serial.println();
         Serial.flush();
     }
 }
