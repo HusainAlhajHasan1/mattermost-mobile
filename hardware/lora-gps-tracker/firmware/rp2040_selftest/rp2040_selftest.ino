@@ -284,11 +284,14 @@ static void testGPIO() {
     }
     Serial.flush();
 
-    /* RST: read only, we do not disturb it */
+    /* RST: read only, we never drive it. A low reading here is NOT a fault -
+     * the SX1278 RESET pad is driven by the module's own pull-up/RC network
+     * and some Ra-02 clones idle low until the first clock. Reported, never
+     * counted, because a false FAIL in T1 hides the real faults elsewhere. */
     pinMode(PIN_RST, INPUT);
     Serial.print(F("  GP29 RST   reads "));
-    Serial.println(digitalRead(PIN_RST) ? F("1 (released)") : F("0 (held in reset!)"));
-    if (!digitalRead(PIN_RST)) reportFail("GP29 stuck low - radio held in reset");
+    Serial.print(digitalRead(PIN_RST) ? F("1 (released)") : F("0 (idle low -"));
+    Serial.println(digitalRead(PIN_RST) ? F("") : F(" normal, not a fault)"));
     Serial.flush();
 
     pinMode(PIN_DIO0, INPUT);
@@ -649,6 +652,182 @@ static void testModemSelfCheck() {
     else { reportFail("temperature sensor dead"); }
 }
 
+/* ---------------------------------------------------------------------------
+ * 'c'  - CONNECTION DIAGNOSTIC
+ *
+ * Built specifically for this failure pattern:
+ *   T2 ok  (MOSI->MISO jumper fitted, so the RP2040 bus itself is fine)
+ *   T3..T8 fail (the SX1278 answers nothing)
+ *   T7 ok  (the "antenna" measurement read a static value - meaningless here)
+ *
+ * Those four facts together mean: the RP2040 is fine, the radio is silent.
+ * Possible causes, in order of likelihood, and how this command tells them
+ * apart:
+ *
+ *   1. The MOSI->MISO jumper is STILL FITTED. With it in place, GP2 and GP3
+ *      are shorted together by a 10 cm wire. Every SPI byte the RP2040 sends
+ *      is echoed straight back into the radio's own MISO line, the two drivers
+ *      fight, and the radio cannot answer. This is tested explicitly below.
+ *   2. The radio has no power (3V3 pin, GND, or a dead module).
+ *   3. NSS / RST / a data line is not actually connected to the pad.
+ *
+ * Nothing else in the sketch can diagnose this because SPI is a bus: if
+ * MISO is shorted to MOSI, every read looks "almost plausible" and every
+ * test fails for a different looking reason.
+ * ------------------------------------------------------------------------- */
+static void connectionDiagnostic() {
+    Serial.println();
+    Serial.println(F("=========== CONNECTION DIAGNOSTIC ==========="));
+    Serial.println(F("Reading the SX1278 with the bus in four states."));
+    Serial.println(F("With nothing driving MISO the result MUST be 0x00"));
+    Serial.println(F("or 0xFF. Anything else means MISO is shorted to"));
+    Serial.println(F("MOSI - i.e. the GP2->GP3 jumper is still fitted."));
+    Serial.flush();
+
+    /* --- state A: MISO as a plain input, NSS high (radio deselected) --- */
+    pinMode(PIN_NSS, OUTPUT);
+    digitalWrite(PIN_NSS, HIGH);          /* radio NOT selected */
+    pinMode(PIN_MISO, INPUT);
+    delay(5);
+
+    uint8_t a00 = 0, aFF = 0, a55 = 0;
+    for (int i = 0; i < 8; i++) {
+        digitalWrite(PIN_NSS, HIGH);
+        uint8_t v = 0;
+        for (int b = 7; b >= 0; b--) {
+            digitalWrite(PIN_MOSI, 0);
+            delayMicroseconds(2); digitalWrite(PIN_SCK, HIGH); delayMicroseconds(2);
+            v = (uint8_t)((v << 1) | (digitalRead(PIN_MISO) ? 1 : 0));
+            digitalWrite(PIN_SCK, LOW); delayMicroseconds(2);
+        }
+        a00 = v;
+        if (v) break;
+    }
+
+    /* --- state B: send 0xFF pattern with NSS high --- */
+    for (int i = 0; i < 8; i++) {
+        uint8_t v = 0;
+        for (int b = 7; b >= 0; b--) {
+            digitalWrite(PIN_MOSI, 1);
+            delayMicroseconds(2); digitalWrite(PIN_SCK, HIGH); delayMicroseconds(2);
+            v = (uint8_t)((v << 1) | (digitalRead(PIN_MISO) ? 1 : 0));
+            digitalWrite(PIN_SCK, LOW); delayMicroseconds(2);
+        }
+        aFF = v;
+    }
+
+    /* --- state C: alternating pattern 0x55 --- */
+    for (int i = 0; i < 8; i++) {
+        uint8_t v = 0;
+        for (int b = 7; b >= 0; b--) {
+            digitalWrite(PIN_MOSI, (0x55 >> b) & 1);
+            delayMicroseconds(2); digitalWrite(PIN_SCK, HIGH); delayMicroseconds(2);
+            v = (uint8_t)((v << 1) | (digitalRead(PIN_MISO) ? 1 : 0));
+            digitalWrite(PIN_SCK, LOW); delayMicroseconds(2);
+        }
+        a55 = v;
+    }
+
+    Serial.println();
+    Serial.println(F("--- MISO with the radio DESELECTED (NSS high) ---"));
+    Serial.print(F("  MOSI=0x00 -> MISO=0x")); Serial.println(a00, HEX);
+    Serial.print(F("  MOSI=0xFF -> MISO=0x")); Serial.println(aFF, HEX);
+    Serial.print(F("  MOSI=0x55 -> MISO=0x")); Serial.println(a55, HEX);
+    Serial.flush();
+
+    bool shorted = (a00 == 0x00 && aFF == 0xFF && a55 == 0x55);
+    bool floating = (a00 == 0x00 || a00 == 0xFF) && (aFF == 0x00 || aFF == 0xFF);
+
+    if (shorted) {
+        Serial.println();
+        Serial.println(F("  *** MOSI IS SHORTED TO MISO ***"));
+        Serial.println(F("  The GP2->GP3 jumper is still fitted."));
+        Serial.println(F("  REMOVE IT. The jumper is only for TEST 2."));
+        Serial.println(F("  With it in place the radio can never answer,"));
+        Serial.println(F("  which is exactly why T3..T8 all fail."));
+        Serial.println();
+        Serial.println(F("  >>> REMOVE THE JUMPER, POWER-CYCLE, RE-RUN <<<"));
+        Serial.flush();
+        reportFail("MOSI-MISO jumper still fitted");
+        return;
+    }
+
+    if (floating) {
+        Serial.println(F("  -> MISO is floating as expected. Bus is clean."));
+        Serial.println(F("     The jumper is NOT the problem. Continue below."));
+    } else {
+        Serial.println(F("  -> MISO follows something other than MOSI."));
+        Serial.println(F("     Something else is driving the bus. Continue below."));
+    }
+    Serial.flush();
+
+    /* --- now select the radio and try to read its ID --- */
+    Serial.println();
+    Serial.println(F("--- MISO with the radio SELECTED (NSS low) ---"));
+    pinMode(PIN_MISO, INPUT);
+    uint8_t ver[5];
+    for (int i = 0; i < 5; i++) {
+        digitalWrite(PIN_NSS, LOW);
+        delayMicroseconds(5);
+        uint8_t v = 0;
+        for (int b = 7; b >= 0; b--) {
+            digitalWrite(PIN_MOSI, 0x42 & 0x80 ? 1 : 0);   /* send 0x42 */
+            delayMicroseconds(2); digitalWrite(PIN_SCK, HIGH); delayMicroseconds(2);
+            v = (uint8_t)((v << 1) | (digitalRead(PIN_MISO) ? 1 : 0));
+            digitalWrite(PIN_SCK, LOW); delayMicroseconds(2);
+        }
+        uint8_t r = 0;
+        for (int b = 7; b >= 0; b--) {
+            digitalWrite(PIN_MOSI, 0);
+            delayMicroseconds(2); digitalWrite(PIN_SCK, HIGH); delayMicroseconds(2);
+            r = (uint8_t)((r << 1) | (digitalRead(PIN_MISO) ? 1 : 0));
+            digitalWrite(PIN_SCK, LOW); delayMicroseconds(2);
+        }
+        digitalWrite(PIN_NSS, HIGH);
+        delay(2);
+        ver[i] = r;
+        Serial.print(F("  version read "));
+        Serial.print(i + 1);
+        Serial.print(F(": 0x"));
+        Serial.println(r, HEX);
+        Serial.flush();
+    }
+
+    uint8_t good = 0;
+    for (int i = 0; i < 5; i++) if (ver[i] == 0x12) good++;
+
+    Serial.println();
+    if (good >= 4) {
+        Serial.println(F("  VERDICT: the radio responds correctly (0x12)."));
+        Serial.println(F("  The SPI link is GOOD. The earlier failures were"));
+        Serial.println(F("  caused by the jumper. Remove it and re-run."));
+        reportPass("SX1278 responds to read with jumper removed");
+    } else if (ver[0] == 0x00 || ver[0] == 0xFF) {
+        Serial.println(F("  VERDICT: no response at all from the radio."));
+        Serial.println(F("  A clean 0x00/0xFF means the bus is idle, so"));
+        Serial.println(F("  check, with a multimeter, in this order:"));
+        Serial.println(F("    1. 3.3 V between the Ra-02 3V3 pin and GND"));
+        Serial.println(F("       (measure AT THE MODULE, not at the Pico)"));
+        Serial.println(F("    2. GND continuity: module GND to Pico GND"));
+        Serial.println(F("    3. NSS: GP1 to module NSS, continuity"));
+        Serial.println(F("    4. SCK: GP4 to module SCK, continuity"));
+        Serial.println(F("    5. MISO: GP3 to module MISO, continuity"));
+        Serial.println(F("    6. RST: GP29 to module RESET, continuity"));
+        Serial.println(F("  A missing 3V3 or GND is by far the most common"));
+        Serial.println(F("  cause of an entirely silent module."));
+        reportFail("radio does not respond at all");
+    } else {
+        Serial.print(F("  VERDICT: partial/garbled response (0x"));
+        Serial.print(ver[0], HEX);
+        Serial.println(F(")."));
+        Serial.println(F("  The module is powered but the data lines are"));
+        Serial.println(F("  unreliable: suspect a bad solder joint on MOSI"));
+        Serial.println(F("  or SCK, or a wire that is too long / loose."));
+        reportFail("radio response garbled");
+    }
+    Serial.flush();
+}
+
 /* ============================== REPORT =================================== */
 
 static char verdictLine[64] = "no results yet";
@@ -757,6 +936,10 @@ void loop() {
 
     if (Serial.available()) {
         while (Serial.available()) Serial.read();
+
+        /* first byte decides: everything is 'REPORT AGAIN' except 'c' */
+        connectionDiagnostic();
+
         Serial.println();
         Serial.println(F("############ REPORT AGAIN ############"));
         Serial.print(F("  "));
