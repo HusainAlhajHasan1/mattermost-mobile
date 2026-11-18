@@ -146,6 +146,7 @@ static uint8_t spiRead(uint8_t addr) {
 #define IRQ_RX_DONE              0x40
 #define IRQ_CRC_ERROR            0x20
 #define IRQ_TX_DONE              0x08
+#define IRQ_HDR_ERROR            0x10
 
 /* 433 MHz sits on the SX1276 low-frequency port, so the packet-RSSI offset
  * is -164 dBm (-157 is the HF / 868-915 MHz constant). */
@@ -155,6 +156,8 @@ static uint8_t spiRead(uint8_t addr) {
 
 static int16_t  lastRssi = 0;
 static int8_t   lastSnr  = 0;
+static uint32_t crcErrors = 0;   // packets heard but rejected on CRC
+static uint32_t hdrErrors = 0;   // packets heard but rejected on header
 
 static void waitReady() { delay(2); }
 
@@ -291,7 +294,10 @@ static uint8_t radioPoll(uint8_t *buf, uint8_t maxLen) {
     spiWrite(REG_IRQ_FLAGS, 0xFF);       // writing 1s clears
 
     if (flags & IRQ_CRC_ERROR) {
-        Serial.println(F("[rx] packet with bad CRC - dropped"));
+        crcErrors++;
+        Serial.print(F("[rx] packet heard but CRC FAILED (count "));
+        Serial.print(crcErrors);
+        Serial.println(F(") - settings nearly match, toggle CRC with y"));
         return 0;
     }
 
@@ -333,6 +339,8 @@ static void printStatus() {
     Serial.print(txCount);
     Serial.print(F("  rx="));
     Serial.print(rxCount);
+    Serial.print(F("  crc_err="));
+    Serial.print(crcErrors);
     Serial.print(F("  dio0_isr="));
     Serial.print(dio0Edges);
     Serial.print(F("  last_rssi="));
@@ -368,7 +376,8 @@ static void radioDump() {
         case 9:  Serial.println(F("500 kHz")); break;
         default: Serial.print(F("0x")); Serial.println((fr1 >> 4) & 0x0F, HEX); break;
     }
-    Serial.print(F("    coding rate   : 4/")); Serial.println(5 + ((fr1 >> 1) & 0x07));
+    { uint8_t v = (fr1 >> 1) & 0x07;
+      Serial.print(F("    coding rate   : 4/")); Serial.println(4 + v); }
     Serial.print(F("  ModemCfg2(0x1E) = 0x")); Serial.println(fr2, HEX);
     Serial.print(F("    spreading     : SF")); Serial.println((fr2 >> 4) & 0x0F);
     Serial.print(F("    CRC           : ")); Serial.println((fr2 & 0x04) ? F("on") : F("OFF <-- problem"));
@@ -399,37 +408,76 @@ static void radioDump() {
  * board: if the antenna and front end are alive, the number changes when you
  * bring a transmitter near. Press any key to stop.
  * ------------------------------------------------------------------------- */
-static void rssiMonitor() {
-    const uint32_t WINDOW_MS = 12000;
+/* Raw-RSSI reads are only legal in FSK/OOK mode - the SX1278 LoRa modem does
+ * not implement continuous RSSI. This switches the chip to FSK standby, reads
+ * RegRssiValue, then restores the LoRa configuration. No packets, no matching
+ * settings needed: this measures the RF floor straight off the antenna. */
+static int16_t fskRssiSample() {
+    /* --- park the LoRa config we need to restore --- */
+    uint8_t mc1  = spiRead(REG_MODEM_CONFIG_1);
+    uint8_t mc2  = spiRead(REG_MODEM_CONFIG_2);
+    uint8_t mc3  = spiRead(REG_MODEM_CONFIG_3);
+    uint8_t sync = spiRead(REG_SYNC_WORD);
+    uint8_t plen = spiRead(REG_PAYLOAD_LENGTH);
+    uint8_t det  = spiRead(REG_DETECT_OPTIMIZE);
+    uint8_t dth  = spiRead(REG_DETECT_THRESHOLD);
 
-    radioStandby();
+    /* --- go to FSK standby --- */
+    spiWrite(REG_OP_MODE, MODE_SLEEP);                    // LoRa bit cleared = FSK
+    delay(3);
+    spiWrite(REG_OP_MODE, MODE_STDBY);                    // FSK standby
+    delay(3);
+    spiWrite(REG_RSSI_CONFIG, 0x01);                      // start continuous RSSI
+    delay(2);
+
+    /* average a few reads, the register updates every ~1 ms */
+    int32_t acc = 0;
+    for (int i = 0; i < 8; i++) { acc += spiRead(REG_RSSI_VALUE); delay(2); }
+    int16_t raw = (int16_t)(acc / 8);
+    int16_t dbm = (int16_t)(-164 + raw);                  // FSK RSSI offset, LF port
+
+    /* --- restore LoRa --- */
     spiWrite(REG_OP_MODE, MODE_LONG_RANGE | MODE_SLEEP);
-    delay(5);
-    /* RxRssiContinuous: low 3 bits = 101, keep LoRa bit */
-    spiWrite(REG_OP_MODE, MODE_LONG_RANGE | 0x05);
-    /* writes to 0x0E go to RSSI_CONFIG while in this mode */
-    spiWrite(REG_RSSI_CONFIG, 0x01);
+    delay(3);
+    spiWrite(REG_MODEM_CONFIG_1, mc1);
+    spiWrite(REG_MODEM_CONFIG_2, mc2);
+    spiWrite(REG_MODEM_CONFIG_3, mc3);
+    spiWrite(REG_SYNC_WORD, sync);
+    spiWrite(REG_DETECT_OPTIMIZE, det);
+    spiWrite(REG_DETECT_THRESHOLD, dth);
+    spiWrite(REG_PAYLOAD_LENGTH, plen);
+    radioStandby();
+    return dbm;
+}
 
-    Serial.println(F("[scan] continuous RSSI for 12 s - any key stops it"));
-    Serial.println(F("       strong signal = -30..-70 dBm | empty band = -100..-125"));
-
+/* 'n' - live noise-floor monitor. Works regardless of SF / CRC / sync word on
+ * the other node, so it separates "antenna or front end dead" from "settings
+ * do not match". Expect roughly -100..-125 dBm with nothing transmitting. */
+static void rssiMonitor() {
+    const uint32_t WINDOW_MS = 15000;
     int16_t best = -200, worst = 0;
+
+    Serial.println(F("[scan] reading the RF noise floor for 15 s - any key stops"));
+    Serial.println(F("[scan] nothing transmitting: expect about -100 to -125 dBm"));
+    Serial.println(F("[scan] key the other node now and watch the number jump"));
+
     uint32_t t0 = millis();
     while (millis() - t0 < WINDOW_MS) {
         if (Serial.available()) { while (Serial.available()) Serial.read(); break; }
 
-        uint8_t raw = spiRead(REG_RSSI_VALUE);
-        int16_t dbm = (int16_t)RSSI_OFFSET + raw;
-        if (dbm < worst) worst = dbm;
-        if (dbm > best)  best  = dbm;
+        int16_t dbm = fskRssiSample();
+        if (dbm < best) worst = dbm;
+        if (dbm > best) best  = dbm;
 
         Serial.print(F("  rssi="));
         Serial.print(dbm);
         Serial.print(F(" dBm  "));
-        int bars = (dbm + 130) / 3;          // -130..-100 -> 0..10 bars
+        int bars = (dbm + 135) / 3;                 // -135..-105 -> 0..10
+        if (bars < 0)  bars = 0;
+        if (bars > 10) bars = 10;
         for (int i = 0; i < 10; i++) Serial.print(i < bars ? '#' : '.');
         Serial.println();
-        delay(200);
+        delay(250);
     }
 
     Serial.print(F("[scan] best="));
@@ -437,21 +485,97 @@ static void rssiMonitor() {
     Serial.print(F(" dBm  worst="));
     Serial.print(worst);
     Serial.println(F(" dBm"));
-    if (best > -85) {
-        Serial.println(F("[scan] RF front end is ALIVE (signal detected)"));
+
+    if (best > -95) {
+        Serial.println(F("[scan] SIGNAL PRESENT - antenna and front end are alive."));
+        Serial.println(F("[scan] the problem is settings: try p (SF) and y (CRC)."));
     } else {
-        Serial.println(F("[scan] flat noise floor - check antenna and that the"));
-        Serial.println(F("       other board is actually transmitting"));
+        Serial.println(F("[scan] FLAT NOISE FLOOR at every sample."));
+        Serial.println(F("[scan]  - antenna not connected / broken u.FL"));
+        Serial.println(F("[scan]  - the other node is not actually transmitting"));
+        Serial.println(F("[scan]  - other node is on a different band (868/915 vs 433)"));
+        Serial.println(F("[scan]  - 3V3 sagging under transmit load"));
     }
 
     radioStartRx();
     Serial.println(F("[scan] back to receive"));
 }
 
+/* ---------------------------------------------------------------------------
+ * 'b' - brute-force matcher. Walks every SF 7..12 with CRC off, then with CRC
+ * on, and for each combination transmits one packet and then listens for 4 s.
+ * If the other node is a stock LoRa-library build (SF7 + CRC off) it will be
+ * found on the first pass. Stop with any key.
+ * ------------------------------------------------------------------------- */
+static void bruteForceMatch() {
+    Serial.println(F("[match] trying every SF with CRC off, then CRC on"));
+    Serial.println(F("[match] press any key to stop"));
+    bool found = false;
+
+    for (uint8_t crcPass = 0; crcPass < 2 && !found; crcPass++) {
+        gCrc = (crcPass == 1);
+        for (uint8_t sf = 7; sf <= 12 && !found; sf++) {
+            if (Serial.available()) { while (Serial.available()) Serial.read(); return; }
+
+            gSf = sf;
+            radioSleep();
+            spiWrite(REG_MODEM_CONFIG_2,
+                     (uint8_t)(((gSf & 0x0F) << 4) | (gCrc ? 0x04 : 0x00)));
+            spiWrite(REG_MODEM_CONFIG_3, (uint8_t)(gSf >= 11 ? 0x0C : 0x04));
+            radioStandby();
+
+            Serial.print(F("  SF"));
+            Serial.print(sf);
+            Serial.print(F("  crc="));
+            Serial.print(gCrc ? F("on ") : F("off"));
+            Serial.print(F("  ... "));
+
+            /* transmit a probe */
+            char probe[24];
+            int n = snprintf(probe, sizeof(probe), "PROBE,%u,%u", NODE_ID, sf);
+            radioSend((const uint8_t *)probe, (uint8_t)n);
+            Serial.print(F("tx "));
+
+            /* listen for an answer */
+            radioStartRx();
+            uint32_t t0 = millis();
+            uint32_t crc0 = crcErrors;
+            uint8_t got = 0;
+            uint8_t buf[MAX_PAYLOAD + 1];
+            while (millis() - t0 < 4000) {
+                got = radioPoll(buf, MAX_PAYLOAD);
+                if (got) break;
+                if (Serial.available()) { while (Serial.available()) Serial.read(); return; }
+                delay(5);
+            }
+
+            if (got) {
+                buf[got] = '\0';
+                Serial.print(F("GOT a packet: "));
+                Serial.println((char *)buf);
+                found = true;
+            } else if (crcErrors > crc0) {
+                Serial.println(F("heard a packet but CRC failed - flip CRC with y"));
+                found = true;
+            } else {
+                Serial.println(F("nothing"));
+            }
+        }
+    }
+
+    if (!found) {
+        Serial.println(F("[match] no reply on any setting."));
+        Serial.println(F("[match] one-way test only works if the other node answers."));
+        Serial.println(F("[match] run 'n' to check the antenna, then watch the"));
+        Serial.println(F("[match] other node while this one sends with 't'."));
+    }
+    radioStartRx();
+}
+
 static void help() {
     Serial.println(F("commands: r=receive  t=test-tx  a=auto-beacon  s=stop  "
                      "m<text>=send  i=status  d=radio-dump  n=rf-scan\n"
-                     "          p=cycle-SF  y=toggle-CRC  h=help"));
+                     "          p=cycle-SF  y=toggle-CRC  b=auto-match  h=help"));
 }
 
 static void beacon() {
@@ -521,6 +645,7 @@ static void runCommand(char *line) {
         case 'i': printStatus(); break;
         case 'd': radioDump(); break;
         case 'n': rssiMonitor(); break;
+        case 'b': bruteForceMatch(); break;
         case 'p': {
             gSf = (uint8_t)(gSf >= 12 ? 7 : gSf + 1);
             radioSleep();
