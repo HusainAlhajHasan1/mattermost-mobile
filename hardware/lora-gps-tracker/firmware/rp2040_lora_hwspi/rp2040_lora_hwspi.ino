@@ -51,7 +51,7 @@
 #define NODE_ID                 1
 #define FREQ_HZ                 433E6
 #define SPREADING_FACTOR        9
-#define BANDWIDTH               125E3
+x
 #define TX_POWER_DBM            17
 #define SYNC_WORD               0x12
 #define BEACON_INTERVAL_MS      5000UL

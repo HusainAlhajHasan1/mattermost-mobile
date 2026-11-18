@@ -49,7 +49,8 @@
 
 #define NODE_ID                 1          // give each board its own id
 #define FREQ_HZ                 433000000UL
-#define SPREADING_FACTOR        9          // 7..12 (9 = good range/speed mix)
+static uint8_t  gSf  = 9;          // 7..12, changeme with 'p'
+static bool     gCrc = true;       // toggle with 'y'
 #define CODING_RATE_4_5         1          // 1 = 4/5, 2 = 4/6, 3 = 4/7, 4 = 4/8
 #define TX_POWER_DBM            17         // +17 dBm max for the Ra-02
 #define SYNC_WORD               0x12       // private network sync word
@@ -228,8 +229,8 @@ static bool radioBegin() {
 
     spiWrite(REG_MODEM_CONFIG_1, modemConfig1());
     spiWrite(REG_MODEM_CONFIG_2,
-             (uint8_t)(((SPREADING_FACTOR & 0x0F) << 4) | 0x04));   // CRC on
-    spiWrite(REG_MODEM_CONFIG_3, (uint8_t)(SPREADING_FACTOR >= 11 ? 0x0C : 0x04));
+             (uint8_t)(((gSf & 0x0F) << 4) | (gCrc ? 0x04 : 0x00)));
+    spiWrite(REG_MODEM_CONFIG_3, (uint8_t)(gSf >= 11 ? 0x0C : 0x04));
     spiWrite(REG_PREAMBLE_MSB, 0x00);
     spiWrite(REG_PREAMBLE_LSB, 0x08);
     spiWrite(REG_SYNC_WORD, SYNC_WORD);
@@ -325,7 +326,9 @@ static void printStatus() {
     Serial.print(F("  freq="));
     Serial.print((uint32_t)(FREQ_HZ / 1000));
     Serial.print(F("kHz  sf="));
-    Serial.print(SPREADING_FACTOR);
+    Serial.print(gSf);
+    Serial.print(F("  crc="));
+    Serial.print(gCrc ? F("on") : F("off"));
     Serial.print(F("  tx="));
     Serial.print(txCount);
     Serial.print(F("  rx="));
@@ -447,7 +450,8 @@ static void rssiMonitor() {
 
 static void help() {
     Serial.println(F("commands: r=receive  t=test-tx  a=auto-beacon  s=stop  "
-                     "m<text>=send  i=status  d=radio-dump  n=rf-scan  h=help"));
+                     "m<text>=send  i=status  d=radio-dump  n=rf-scan\n"
+                     "          p=cycle-SF  y=toggle-CRC  h=help"));
 }
 
 static void beacon() {
@@ -517,6 +521,25 @@ static void runCommand(char *line) {
         case 'i': printStatus(); break;
         case 'd': radioDump(); break;
         case 'n': rssiMonitor(); break;
+        case 'p': {
+            gSf = (uint8_t)(gSf >= 12 ? 7 : gSf + 1);
+            radioSleep();
+            spiWrite(REG_MODEM_CONFIG_2,
+                     (uint8_t)(((gSf & 0x0F) << 4) | (gCrc ? 0x04 : 0x00)));
+            spiWrite(REG_MODEM_CONFIG_3, (uint8_t)(gSf >= 11 ? 0x0C : 0x04));
+            Serial.print(F("[cfg] spreading factor = SF")); Serial.println(gSf);
+            radioStartRx();
+            break;
+        }
+        case 'y': {
+            gCrc = !gCrc;
+            uint8_t mc2 = spiRead(REG_MODEM_CONFIG_2);
+            mc2 = (uint8_t)((mc2 & ~0x04) | (gCrc ? 0x04 : 0x00));
+            spiWrite(REG_MODEM_CONFIG_2, mc2);
+            Serial.print(F("[cfg] crc = ")); Serial.println(gCrc ? F("on") : F("off"));
+            radioStartRx();
+            break;
+        }
         case 'h': help(); break;
         case 'm': {
             const char *msg = line + 1;
